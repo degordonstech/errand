@@ -1,0 +1,78 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import ffmpegStatic from "ffmpeg-static";
+
+const execFileAsync = promisify(execFile);
+
+async function run(bin: string, args: string[]): Promise<void> {
+  try {
+    await execFileAsync(bin, args, { maxBuffer: 10 * 1024 * 1024 });
+  } catch (err: any) {
+    throw new Error(`ffmpeg failed (exit ${err.code}): ${String(err.stderr ?? "").trim().slice(-500) || err.message}`);
+  }
+}
+
+// FFMPEG_PATH wins, then the bundled binary, then whatever ffmpeg is on PATH.
+const bundled = ffmpegStatic as unknown as string | null;
+const ffmpegPath = process.env.FFMPEG_PATH || (bundled && existsSync(bundled) ? bundled : "ffmpeg");
+
+async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "errand-"));
+  try {
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Voice note (usually OGG/Opus) to 24 kHz mono 16-bit WAV for Muse Voice Transcribe.
+ * Without the leading pad and loudness normalisation the model often drops the first few words.
+ */
+export function toTranscriptionWav(input: Buffer): Promise<Buffer> {
+  return withTempDir(async (dir) => {
+    const src = join(dir, "in");
+    const dst = join(dir, "out.wav");
+    await writeFile(src, input);
+    await run(ffmpegPath, [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", src,
+      "-af", "adelay=600:all=1,apad=pad_dur=0.6,loudnorm",
+      "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le",
+      dst,
+    ]);
+    return readFile(dst);
+  });
+}
+
+/**
+ * Pulls one frame per second from a video and keeps the sharpest few, in time order.
+ * JPEG size is a cheap stand-in for sharpness: blurred frames compress smaller.
+ * Muse Spark reads fine print (NAFDAC numbers, batch codes) far more reliably from these than from the raw video.
+ */
+export function sharpestFrames(input: Buffer, count = 6): Promise<Buffer[]> {
+  return withTempDir(async (dir) => {
+    const src = join(dir, "in");
+    await writeFile(src, input);
+    await run(ffmpegPath, [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", src,
+      "-vf", "fps=1,scale='min(1920,iw)':-2",
+      "-frames:v", "60",
+      "-q:v", "2",
+      join(dir, "f-%03d.jpg"),
+    ]);
+    const names = (await readdir(dir)).filter((n) => n.startsWith("f-"));
+    const sized = await Promise.all(names.map(async (n) => ({ n, size: (await stat(join(dir, n))).size })));
+    const picked = sized
+      .sort((a, b) => b.size - a.size)
+      .slice(0, count)
+      .map((f) => f.n)
+      .sort();
+    return Promise.all(picked.map((n) => readFile(join(dir, n))));
+  });
+}
