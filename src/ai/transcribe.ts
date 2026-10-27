@@ -1,6 +1,7 @@
 import { fetchRetry } from "../net.js";
 import { config } from "../config.js";
 import { toTranscriptionWav } from "../media/ffmpeg.js";
+import { metaHeaders } from "./client.js";
 
 const LANGUAGES = ["English", "Nigerian Pidgin"];
 
@@ -25,7 +26,7 @@ export async function transcribe(audio: Buffer, keywords: string[] = []): Promis
 
   const res = await fetchRetry(`${config.META_API_BASE_URL}/asr/transcribe`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${config.META_API_KEY}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${config.META_API_KEY}`, Accept: "application/json", ...metaHeaders() },
     body: form,
     signal: AbortSignal.timeout(60_000),
   });

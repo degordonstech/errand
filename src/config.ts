@@ -19,6 +19,8 @@ const schema = z.object({
   META_API_BASE_URL: z.string().url().default("https://api.meta.ai/v1"),
   MUSE_SPARK_MODEL: z.string().min(1).default("muse-spark-1.3"),
   MUSE_TRANSCRIBE_MODEL: z.string().min(1).default("muse-voice-transcribe-1.0"),
+  /** Set when META_API_BASE_URL points at the Cloudflare relay (deploy/cloudflare). */
+  META_RELAY_KEY: z.string().default(""),
 
   WHATSAPP_TOKEN: z.string().min(1),
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
