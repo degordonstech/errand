@@ -52,7 +52,6 @@ const payload = {
           value: {
             messaging_product: "whatsapp",
             metadata: { phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID },
-            contacts: [{ wa_id: from, profile: { name: "Simulator" } }],
             messages: [
               { id: `wamid.sim-${randomUUID()}`, from, timestamp: String(Math.floor(Date.now() / 1000)), ...message },
             ],

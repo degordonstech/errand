@@ -30,7 +30,8 @@ export async function getOrCreateUser(waId: string, name?: string): Promise<User
     .select("id, wa_id, name, business_name")
     .single();
   if (error) throw new Error(`getOrCreateUser: ${error.message}`);
-  if (name && !data.name) {
+  // WhatsApp profile names change; keep the latest.
+  if (name && name !== data.name) {
     await db.from("users").update({ name }).eq("id", data.id);
     data.name = name;
   }
