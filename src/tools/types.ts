@@ -11,6 +11,8 @@ export interface ToolResult {
   /** Shown to the user when the tool ran after approval; fed back to the model otherwise. */
   message: string;
   data?: unknown;
+  /** Text the user must see this turn, verbatim, whatever the model writes (for example a document explanation). */
+  showUser?: string;
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {
@@ -22,8 +24,11 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
    * The agent never runs them. They go through the safety gate and run only after YES.
    */
   sensitive: boolean;
-  /** Plain description of exactly what will happen, shown when asking for approval. */
-  summarize?(args: z.infer<S>, ctx: ToolContext): string;
+  /**
+   * Plain description of exactly what will happen, shown when asking for approval.
+   * Throw to refuse the request (for example, no email address on file); the message goes back to the model.
+   */
+  summarize?(args: z.infer<S>, ctx: ToolContext): string | Promise<string>;
   run(args: z.infer<S>, ctx: ToolContext): Promise<ToolResult>;
 }
 

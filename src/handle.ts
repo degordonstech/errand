@@ -3,11 +3,9 @@ import { runAgent } from "./ai/agent.js";
 import { systemPrompt } from "./ai/prompts.js";
 import { transcribe } from "./ai/transcribe.js";
 import { imagePart, pdfPart, videoParts } from "./ai/vision.js";
-import { getOrCreateUser, getUserById, recentMessages, saveMessage, type User } from "./db/supabase.js";
+import { getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
 import { logger, maskPhone } from "./log.js";
-import { SafetyGate } from "./safety/gate.js";
-import { supabaseGateStore } from "./safety/store.js";
-import { EMAIL_TOOLS, getTool } from "./tools/index.js";
+import { gate } from "./safety/instance.js";
 import { logAction } from "./tools/log.js";
 import { loadMemory } from "./tools/memory.js";
 import { downloadMedia } from "./whatsapp/media.js";
@@ -17,19 +15,6 @@ import type { InboundMessage } from "./whatsapp/types.js";
 type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
 
 const HISTORY_LIMIT = 20;
-
-export const gate = new SafetyGate({
-  store: supabaseGateStore,
-  emailTools: EMAIL_TOOLS,
-  async execute(action) {
-    const tool = getTool(action.tool);
-    if (!tool?.sensitive) throw new Error(`no sensitive tool named ${action.tool}`);
-    // Stored args are validated again before anything runs.
-    const args = tool.schema.parse(action.args);
-    const user = await getUserById(action.userId);
-    return (await tool.run(args, { user, actionId: action.id })).message;
-  },
-});
 
 interface Inbound {
   /** What the user said: text, caption or voice transcript. */

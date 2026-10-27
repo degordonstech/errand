@@ -48,3 +48,17 @@ export async function markReadAndTyping(messageId: string): Promise<void> {
     logger.debug({ err }, "read receipt failed");
   }
 }
+
+/** Sends an approved template. Needed to reach a user more than 24 hours after their last message. */
+export async function sendTemplate(to: string, name: string, language: string, bodyParams: string[]): Promise<string | undefined> {
+  const res = await messages({
+    to,
+    type: "template",
+    template: {
+      name,
+      language: { code: language },
+      components: [{ type: "body", parameters: bodyParams.map((text) => ({ type: "text", text })) }],
+    },
+  });
+  return res?.messages?.[0]?.id;
+}
