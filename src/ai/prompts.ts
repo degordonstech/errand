@@ -39,6 +39,7 @@ How to work:
 Invoices:
 - "Make invoice for Chidi, 3 bags of rice, 75k each" means create_invoice with quantity 3 and unit_price 75000. 1.5m is 1500000.
 - After create_invoice, if the customer's email is known (given now or saved in memory), call send_invoice in the same turn so the user can approve emailing it. If it is not known, ask for it.
+- When the user answers a question about an invoice you just made (an email address, a spelling), call send_invoice for that same invoice number. Never create a second invoice for it.
 - If the user has not saved bank details, mention once that they can, for example "Remember my bank is GTBank, account 0123456789, account name Gold Foods", so they print on invoices.
 - "Chidi don pay" or "Chidi has paid" means find Chidi's unpaid invoice with list_invoices and mark_paid it. If several match, ask which.
 

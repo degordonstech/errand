@@ -91,6 +91,28 @@ const itemSchema = z.object({
   unit_price: z.number().nonnegative().max(10_000_000_000).describe("Price for one unit in naira, as a plain number. 75k is 75000."),
 });
 
+const REPEAT_WINDOW_MS = 30 * 60_000;
+
+/**
+ * An unsent invoice for the same customer and total made in the last 30 minutes. The model
+ * sometimes calls create_invoice again when the user only answers a question about the first one.
+ */
+export function findRepeat(
+  recent: Pick<InvoiceRow, "number" | "customer_name" | "total" | "sent_at" | "created_at">[],
+  customerName: string,
+  total: number,
+  now = Date.now(),
+) {
+  const name = customerName.trim().toLowerCase();
+  return recent.find(
+    (r) =>
+      !r.sent_at &&
+      r.customer_name.trim().toLowerCase() === name &&
+      Number(r.total) === total &&
+      now - new Date(r.created_at).getTime() < REPEAT_WINDOW_MS,
+  );
+}
+
 export const createInvoice = defineTool({
   name: "create_invoice",
   description:
@@ -108,6 +130,22 @@ export const createInvoice = defineTool({
     const items: InvoiceItem[] = args.items.map((i) => ({ description: i.description, quantity: i.quantity, unitPrice: i.unit_price }));
     const total = invoiceTotal(items);
     const due = new Date(Date.now() + (args.due_in_days ?? 7) * 86_400_000);
+
+    const { data: recent, error: recentError } = await db
+      .from("invoices")
+      .select("number, customer_name, total, sent_at, created_at")
+      .eq("user_id", user.id)
+      .gte("created_at", new Date(Date.now() - REPEAT_WINDOW_MS).toISOString());
+    if (recentError) throw new Error(`create_invoice: ${recentError.message}`);
+    const repeat = findRepeat(recent ?? [], args.customer_name, total);
+    if (repeat) {
+      return {
+        message:
+          `Not created: this is already ${repeat.number}, made a few minutes ago and not emailed yet. ` +
+          `To email it, call send_invoice with invoice_number ${repeat.number}${args.customer_email ? ` and customer_email ${args.customer_email}` : ""}.`,
+        data: { invoice_number: repeat.number, total },
+      };
+    }
 
     let row: InvoiceRow | null = null;
     for (let attempt = 0; attempt < 3 && !row; attempt++) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatMoney, invoiceTotal, lineTotal, renderInvoicePdf } from "../src/invoice/pdf.js";
-import { normaliseInvoiceNumber } from "../src/tools/invoice.js";
+import { findRepeat, normaliseInvoiceNumber } from "../src/tools/invoice.js";
 
 describe("invoice maths", () => {
   it("totals quantity times unit price", () => {
@@ -37,5 +37,19 @@ describe("renderInvoicePdf", () => {
     });
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     expect(pdf.length).toBeGreaterThan(1000);
+  });
+});
+
+describe("findRepeat", () => {
+  const now = Date.parse("2026-10-27T16:02:46Z");
+  const inv4 = { number: "INV-0004", customer_name: "Godwin", total: 225000, sent_at: null, created_at: "2026-10-27T16:01:22Z" };
+
+  it("finds the unsent invoice the user is still answering questions about", () => {
+    expect(findRepeat([inv4], " godwin ", 225000, now)?.number).toBe("INV-0004");
+  });
+  it("allows a new invoice once the first was emailed, the total differs or time has passed", () => {
+    expect(findRepeat([{ ...inv4, sent_at: "2026-10-27T16:02:00Z" }], "Godwin", 225000, now)).toBeUndefined();
+    expect(findRepeat([inv4], "Godwin", 150000, now)).toBeUndefined();
+    expect(findRepeat([inv4], "Godwin", 225000, now + 31 * 60_000)).toBeUndefined();
   });
 });
