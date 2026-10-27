@@ -19,7 +19,8 @@ function sameSecret(given: string | undefined, expected: string): boolean {
 export function buildApp() {
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: true, bodyLimit: 2 * 1024 * 1024 });
 
-  app.get("/health", async () => ({ ok: true }));
+  // RENDER_GIT_COMMIT is set by Render; it shows which commit is live.
+  app.get("/health", async () => ({ ok: true, commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null }));
 
   registerWebhook(app, {
     claimMessage,
