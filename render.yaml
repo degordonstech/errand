@@ -2,7 +2,7 @@
 # Runs in a US region: from Frankfurt the Meta Model API returned an empty model list for the same key.
 services:
   - type: web
-    name: errand-us
+    name: errand
     runtime: node
     plan: free
     region: virginia
