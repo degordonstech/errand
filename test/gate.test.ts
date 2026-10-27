@@ -211,6 +211,46 @@ describe("agent with the gate", () => {
     expect(sendRun).not.toHaveBeenCalled();
   });
 
+  it("keeps an explanation above the approval request but drops claims that it is sending", async () => {
+    const run = (content: string) => {
+      const { gate } = setup();
+      const complete: Complete = async () => ({
+        role: "assistant",
+        content,
+        refusal: null,
+        tool_calls: [{ id: "c1", type: "function", function: { name: "send_email", arguments: JSON.stringify({ to: "a@example.com", subject: "Re", body: "ok" }) } }],
+      });
+      return runAgent({ ctx, system: "", history: [], content: "x" }, { gate, tools: [fakeEmail], complete });
+    };
+    expect(await run("This is a rent notice from your landlord asking for N50,000 by Friday.")).toMatch(/^This is a rent notice/);
+    expect(await run("I will send it now.")).toMatch(/^Email a@example.com/);
+    expect(await run("Done, sending this to them.")).toMatch(/^Email a@example.com/);
+    expect(await run("I'll resend invoice INV-0001 to Chidi now.")).toMatch(/^Email a@example.com/);
+  });
+
+  it("shows a tool's explanation above the approval request, in place of the model's text", async () => {
+    const { gate } = setup();
+    const explain = defineTool({
+      name: "explain_document",
+      description: "explain",
+      sensitive: false,
+      schema: z.object({ what_it_is: z.string() }),
+      run: async (a) => ({ message: "ok", showUser: `*What it is:* ${a.what_it_is}` }),
+    });
+    const complete: Complete = async () => ({
+      role: "assistant",
+      content: "I'll explain that and draft your reply.",
+      refusal: null,
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "explain_document", arguments: JSON.stringify({ what_it_is: "A rent notice" }) } },
+        { id: "c2", type: "function", function: { name: "send_email", arguments: JSON.stringify({ to: "a@example.com", subject: "Re", body: "ok" }) } },
+      ],
+    });
+    const reply = await runAgent({ ctx, system: "", history: [], content: "x" }, { gate, tools: [explain, fakeEmail], complete });
+    expect(reply).toMatch(/^\*What it is:\* A rent notice\n\nEmail a@example.com: ok\n\nReply \*YES\*/);
+    expect(sendRun).not.toHaveBeenCalled();
+  });
+
   it("allows only one waiting action per turn", async () => {
     const { gate, store } = setup();
     const args = (to: string) => ({ to, subject: "Hi", body: "hello" });

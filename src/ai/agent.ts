@@ -42,6 +42,7 @@ export interface AgentDeps {
 }
 
 const APPROVAL_PROMPT = "Reply *YES* to go ahead or *NO* to cancel.";
+const CLAIMS_SENDING = /\b(sent|sending|(re)?send(ing)? (it|this|that|now)|i('| wi)ll (now )?(re)?(send|email|forward)|emailed|on its way|done)\b/i;
 
 export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<string> {
   const complete = deps.complete ?? sparkComplete;
@@ -55,10 +56,13 @@ export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<stri
     { role: "user", content: input.content },
   ];
 
+  // Text that tools require the user to see (a document explanation), in order.
+  const shown: string[] = [];
+
   for (let step = 1; step <= MAX_STEPS; step++) {
     const msg = await complete(messages, modelTools);
     const calls = (msg.tool_calls ?? []).filter((c) => c.type === "function");
-    if (!calls.length) return cleanReply(msg.content ?? "") || "Done.";
+    if (!calls.length) return [...shown, cleanReply(msg.content ?? "")].filter(Boolean).join("\n\n") || "Done.";
 
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
     let approvalSummary: string | null = null;
@@ -66,12 +70,18 @@ export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<stri
     for (const call of calls) {
       const result = await runCall(call.function.name, call.function.arguments, input.ctx, deps, find, approvalSummary !== null);
       if (result.approvalSummary) approvalSummary = result.approvalSummary;
+      if (result.showUser) shown.push(result.showUser);
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result.forModel) });
     }
 
-    // A sensitive action is now waiting. Stop here and ask in fixed wording only,
-    // so the model cannot phrase it as already done or about to happen.
-    if (approvalSummary) return `${approvalSummary}\n\n${APPROVAL_PROMPT}`;
+    // A sensitive action is now waiting. Stop here and ask in fixed wording. The model's own
+    // text is kept only when nothing else explains the request and it does not claim
+    // that anything was or is being sent.
+    if (approvalSummary) {
+      const lead = cleanReply(msg.content ?? "");
+      const intro = shown.length ? shown : [CLAIMS_SENDING.test(lead) ? "" : lead];
+      return [...intro, approvalSummary, APPROVAL_PROMPT].filter(Boolean).join("\n\n");
+    }
   }
 
   logger.warn({ steps: MAX_STEPS }, "agent hit step limit");
@@ -85,7 +95,7 @@ async function runCall(
   deps: AgentDeps,
   find: (n: string) => Tool<any> | undefined,
   alreadyGated: boolean,
-): Promise<{ forModel: unknown; approvalSummary?: string }> {
+): Promise<{ forModel: unknown; approvalSummary?: string; showUser?: string }> {
   const tool = find(name);
   if (!tool) return { forModel: { error: `Unknown tool ${name}.` } };
 
@@ -103,7 +113,12 @@ async function runCall(
 
   if (tool.sensitive) {
     if (alreadyGated) return { forModel: { error: "Only one action can wait for approval at a time. Ask about this one after the user answers." } };
-    const summary = tool.summarize?.(args, ctx) ?? `${tool.name}: ${JSON.stringify(args)}`;
+    let summary: string;
+    try {
+      summary = (await tool.summarize?.(args, ctx)) ?? `${tool.name}: ${JSON.stringify(args)}`;
+    } catch (err) {
+      return { forModel: { error: (err as Error).message } };
+    }
     const req = await deps.gate.request(ctx.user.id, tool.name, args, summary);
     if (!req.ok) return { forModel: { error: req.reason } };
     return { forModel: { status: "waiting_for_user_approval", note: "Not done yet. The user must reply YES." }, approvalSummary: summary };
@@ -112,7 +127,7 @@ async function runCall(
   try {
     const result = await tool.run(args, ctx);
     await deps.logRun?.(tool.name, args, result.data ?? result.message, true);
-    return { forModel: { ok: true, message: result.message, data: result.data } };
+    return { forModel: { ok: true, message: result.message, data: result.data }, showUser: result.showUser };
   } catch (err) {
     await deps.logRun?.(tool.name, args, (err as Error).message, false);
     logger.error({ err, tool: tool.name }, "tool failed");
