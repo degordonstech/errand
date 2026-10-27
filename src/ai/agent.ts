@@ -1,0 +1,121 @@
+import type OpenAI from "openai";
+import { config } from "../config.js";
+import { logger } from "../log.js";
+import type { SafetyGate } from "../safety/gate.js";
+import { cleanReply } from "../text.js";
+import { getTool, toModelTools, tools as allTools } from "../tools/index.js";
+import type { Tool, ToolContext } from "../tools/types.js";
+import { meta, SPARK_MAX_TOKENS } from "./client.js";
+
+type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
+type AssistantMessage = OpenAI.Chat.Completions.ChatCompletionMessage;
+
+export const MAX_STEPS = 6;
+
+export type Complete = (messages: ChatMessage[], tools: OpenAI.Chat.Completions.ChatCompletionTool[]) => Promise<AssistantMessage>;
+
+const sparkComplete: Complete = async (messages, tools) => {
+  const res = await meta.chat.completions.create({
+    model: config.MUSE_SPARK_MODEL,
+    max_tokens: SPARK_MAX_TOKENS,
+    messages,
+    tools,
+  });
+  return res.choices[0].message;
+};
+
+export interface AgentInput {
+  ctx: ToolContext;
+  system: string;
+  history: ChatMessage[];
+  /** The new message: text, plus any image parts. */
+  content: string | ContentPart[];
+}
+
+export interface AgentDeps {
+  gate: Pick<SafetyGate, "request">;
+  complete?: Complete;
+  tools?: Tool<any>[];
+  /** Records non-sensitive tool runs in the action log. */
+  logRun?: (tool: string, args: unknown, result: unknown, ok: boolean) => Promise<void>;
+}
+
+const APPROVAL_PROMPT = "Reply *YES* to go ahead or *NO* to cancel.";
+
+export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<string> {
+  const complete = deps.complete ?? sparkComplete;
+  const toolList = deps.tools ?? allTools;
+  const find = deps.tools ? (n: string) => toolList.find((t) => t.name === n) : getTool;
+  const modelTools = toModelTools(toolList);
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: input.system },
+    ...input.history,
+    { role: "user", content: input.content },
+  ];
+
+  for (let step = 1; step <= MAX_STEPS; step++) {
+    const msg = await complete(messages, modelTools);
+    const calls = (msg.tool_calls ?? []).filter((c) => c.type === "function");
+    if (!calls.length) return cleanReply(msg.content ?? "") || "Done.";
+
+    messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
+    let approvalSummary: string | null = null;
+
+    for (const call of calls) {
+      const result = await runCall(call.function.name, call.function.arguments, input.ctx, deps, find, approvalSummary !== null);
+      if (result.approvalSummary) approvalSummary = result.approvalSummary;
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result.forModel) });
+    }
+
+    // A sensitive action is now waiting. Stop here and ask in fixed wording only,
+    // so the model cannot phrase it as already done or about to happen.
+    if (approvalSummary) return `${approvalSummary}\n\n${APPROVAL_PROMPT}`;
+  }
+
+  logger.warn({ steps: MAX_STEPS }, "agent hit step limit");
+  return "That took more steps than I can handle in one go. Could you break it into smaller requests?";
+}
+
+async function runCall(
+  name: string,
+  rawArgs: string,
+  ctx: ToolContext,
+  deps: AgentDeps,
+  find: (n: string) => Tool<any> | undefined,
+  alreadyGated: boolean,
+): Promise<{ forModel: unknown; approvalSummary?: string }> {
+  const tool = find(name);
+  if (!tool) return { forModel: { error: `Unknown tool ${name}.` } };
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = rawArgs ? JSON.parse(rawArgs) : {};
+  } catch {
+    return { forModel: { error: "Arguments were not valid JSON." } };
+  }
+  const parsed = tool.schema.safeParse(parsedJson);
+  if (!parsed.success) {
+    return { forModel: { error: "Invalid arguments.", issues: parsed.error.issues.map((i: { path: PropertyKey[]; message: string }) => `${i.path.join(".")}: ${i.message}`) } };
+  }
+  const args = parsed.data;
+
+  if (tool.sensitive) {
+    if (alreadyGated) return { forModel: { error: "Only one action can wait for approval at a time. Ask about this one after the user answers." } };
+    const summary = tool.summarize?.(args, ctx) ?? `${tool.name}: ${JSON.stringify(args)}`;
+    const req = await deps.gate.request(ctx.user.id, tool.name, args, summary);
+    if (!req.ok) return { forModel: { error: req.reason } };
+    return { forModel: { status: "waiting_for_user_approval", note: "Not done yet. The user must reply YES." }, approvalSummary: summary };
+  }
+
+  try {
+    const result = await tool.run(args, ctx);
+    await deps.logRun?.(tool.name, args, result.data ?? result.message, true);
+    return { forModel: { ok: true, message: result.message, data: result.data } };
+  } catch (err) {
+    await deps.logRun?.(tool.name, args, (err as Error).message, false);
+    logger.error({ err, tool: tool.name }, "tool failed");
+    return { forModel: { error: `The ${tool.name} tool failed. Tell the user briefly and do not retry more than once.` } };
+  }
+}

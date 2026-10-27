@@ -1,65 +1,128 @@
+import type OpenAI from "openai";
+import { runAgent } from "./ai/agent.js";
+import { systemPrompt } from "./ai/prompts.js";
 import { transcribe } from "./ai/transcribe.js";
-import { askAboutMedia, imagePart, pdfPart, videoParts } from "./ai/vision.js";
-import { getOrCreateUser, saveMessage } from "./db/supabase.js";
+import { imagePart, pdfPart, videoParts } from "./ai/vision.js";
+import { getOrCreateUser, getUserById, recentMessages, saveMessage, type User } from "./db/supabase.js";
 import { logger, maskPhone } from "./log.js";
+import { SafetyGate } from "./safety/gate.js";
+import { supabaseGateStore } from "./safety/store.js";
+import { EMAIL_TOOLS, getTool } from "./tools/index.js";
+import { logAction } from "./tools/log.js";
+import { loadMemory } from "./tools/memory.js";
 import { downloadMedia } from "./whatsapp/media.js";
 import { markReadAndTyping, sendText } from "./whatsapp/send.js";
 import type { InboundMessage } from "./whatsapp/types.js";
 
-const DESCRIBE = "Describe what is in this in two or three short sentences. Read out any important text.";
+type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
 
-/** Handles one inbound message end to end. The agent loop replaces the reply logic here later. */
+const HISTORY_LIMIT = 20;
+
+export const gate = new SafetyGate({
+  store: supabaseGateStore,
+  emailTools: EMAIL_TOOLS,
+  async execute(action) {
+    const tool = getTool(action.tool);
+    if (!tool?.sensitive) throw new Error(`no sensitive tool named ${action.tool}`);
+    // Stored args are validated again before anything runs.
+    const args = tool.schema.parse(action.args);
+    const user = await getUserById(action.userId);
+    return (await tool.run(args, { user, actionId: action.id })).message;
+  },
+});
+
+interface Inbound {
+  /** What the user said: text, caption or voice transcript. */
+  text: string;
+  /** Media for the model to look at. */
+  parts: ContentPart[];
+  /** Stored in history in place of the media itself. */
+  label: string;
+}
+
+async function readInbound(msg: InboundMessage, memory: Record<string, string>): Promise<Inbound> {
+  const caption = msg.text?.trim() ?? "";
+  switch (msg.kind) {
+    case "text":
+      return { text: caption, parts: [], label: caption };
+    case "voice": {
+      const audio = await downloadMedia(msg.media!.id);
+      const keywords = Object.values(memory).filter((v) => v.length <= 40);
+      const transcript = await transcribe(audio.data, keywords);
+      return { text: transcript, parts: [], label: transcript ? `[voice note] ${transcript}` : "[voice note]" };
+    }
+    case "image": {
+      const img = await downloadMedia(msg.media!.id);
+      return { text: caption, parts: [imagePart(img.data, img.mimeType)], label: `[photo]${caption ? ` ${caption}` : ""}` };
+    }
+    case "video": {
+      const vid = await downloadMedia(msg.media!.id);
+      return { text: caption, parts: await videoParts(vid.data), label: `[video]${caption ? ` ${caption}` : ""}` };
+    }
+    case "doc": {
+      const file = await downloadMedia(msg.media!.id);
+      const name = msg.media!.filename ?? "document";
+      if (file.mimeType === "application/pdf") {
+        return { text: caption, parts: [pdfPart(file.data, name)], label: `[pdf: ${name}]${caption ? ` ${caption}` : ""}` };
+      }
+      if (file.mimeType.startsWith("image/")) {
+        return { text: caption, parts: [imagePart(file.data, file.mimeType)], label: `[photo]${caption ? ` ${caption}` : ""}` };
+      }
+      return { text: caption, parts: [], label: `[file: ${name}, type not supported]` };
+    }
+    default:
+      return { text: "", parts: [], label: `[${msg.rawType ?? "unsupported"} message]` };
+  }
+}
+
+async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: Record<string, string>): Promise<string> {
+  if (msg.kind === "other") return "I can work with text, voice notes, photos, videos and PDFs. Send me one of those.";
+  if (!inbound.text && !inbound.parts.length) {
+    return msg.kind === "voice"
+      ? "I could not make out that voice note. Could you try again?"
+      : "I can read photos and PDFs. That file type is not one I can open yet.";
+  }
+
+  // A bare YES or NO answers the user's own waiting action, typed or spoken.
+  if (!inbound.parts.length) {
+    const answer = await gate.answer(user.id, inbound.text);
+    if (answer) return answer;
+  }
+
+  const history = (await recentMessages(user.id, HISTORY_LIMIT, msg.id))
+    .filter((m) => m.text)
+    .map((m) => ({ role: m.direction === "in" ? ("user" as const) : ("assistant" as const), content: m.text! }));
+
+  const content: string | ContentPart[] = inbound.parts.length
+    ? [{ type: "text", text: inbound.text || "(no caption)" }, ...inbound.parts]
+    : `${msg.kind === "voice" ? "(voice note transcript) " : ""}${inbound.text}`;
+
+  return runAgent(
+    { ctx: { user }, system: systemPrompt({ user, memory, now: new Date() }), history, content },
+    {
+      gate,
+      logRun: (tool, args, result, ok) => logAction({ userId: user.id, tool, args, result: { value: result }, status: ok ? "done" : "failed" }),
+    },
+  );
+}
+
 export async function handleMessage(msg: InboundMessage): Promise<void> {
   const started = Date.now();
   await markReadAndTyping(msg.id);
   const user = await getOrCreateUser(msg.from, msg.profileName);
 
-  let incomingText = msg.text;
-  let reply: string;
-
+  let answer: string;
   try {
-    switch (msg.kind) {
-      case "text":
-        reply = `You said: ${msg.text ?? ""}`;
-        break;
-      case "voice": {
-        const audio = await downloadMedia(msg.media!.id);
-        logger.debug({ mime: audio.mimeType, bytes: audio.data.length }, "voice note downloaded");
-        incomingText = await transcribe(audio.data);
-        reply = incomingText ? `I heard: "${incomingText}"` : "I could not make out that voice note. Could you try again?";
-        break;
-      }
-      case "image": {
-        const img = await downloadMedia(msg.media!.id);
-        reply = await askAboutMedia(DESCRIBE, [imagePart(img.data, img.mimeType)]);
-        break;
-      }
-      case "video": {
-        const vid = await downloadMedia(msg.media!.id);
-        reply = await askAboutMedia(DESCRIBE, await videoParts(vid.data));
-        break;
-      }
-      case "doc": {
-        const file = await downloadMedia(msg.media!.id);
-        if (file.mimeType === "application/pdf") {
-          reply = await askAboutMedia(DESCRIBE, [pdfPart(file.data, msg.media!.filename)]);
-        } else if (file.mimeType.startsWith("image/")) {
-          reply = await askAboutMedia(DESCRIBE, [imagePart(file.data, file.mimeType)]);
-        } else {
-          reply = "I can read photos and PDFs. That file type is not one I can open yet.";
-        }
-        break;
-      }
-      default:
-        reply = "I can work with text, voice notes, photos, videos and PDFs. Send me one of those.";
-    }
+    const memory = await loadMemory(user.id);
+    const inbound = await readInbound(msg, memory);
+    await saveMessage(user.id, "in", msg.kind, inbound.label, msg.id);
+    answer = await reply(user, msg, inbound, memory);
   } catch (err) {
     logger.error({ err, from: maskPhone(msg.from), kind: msg.kind }, "handling failed");
-    reply = "Something went wrong on my side. Please send that again in a moment.";
+    answer = "Something went wrong on my side. Please send that again in a moment.";
   }
 
-  await saveMessage(user.id, "in", msg.kind, incomingText, msg.id);
-  const outId = await sendText(msg.from, reply || "I could not read that one. Could you send it again?");
-  await saveMessage(user.id, "out", "text", reply, outId);
+  const outId = await sendText(msg.from, answer);
+  await saveMessage(user.id, "out", "text", answer, outId);
   logger.info({ from: maskPhone(msg.from), kind: msg.kind, rawType: msg.rawType, ms: Date.now() - started }, "message handled");
 }

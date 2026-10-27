@@ -47,3 +47,26 @@ export async function saveMessage(
     .insert({ user_id: userId, direction, kind, text: text ?? null, wa_message_id: waMessageId ?? null });
   if (error) throw new Error(`saveMessage: ${error.message}`);
 }
+
+export async function getUserById(id: string): Promise<User> {
+  const { data, error } = await db.from("users").select("id, wa_id, name, business_name").eq("id", id).single();
+  if (error) throw new Error(`getUserById: ${error.message}`);
+  return data as User;
+}
+
+export interface StoredMessage {
+  direction: "in" | "out";
+  text: string | null;
+}
+
+/** Most recent messages, oldest first, for conversation history. */
+export async function recentMessages(userId: string, limit: number, excludeWaMessageId?: string): Promise<StoredMessage[]> {
+  const q = db.from("messages").select("direction, text, wa_message_id").eq("user_id", userId).order("created_at", { ascending: false }).limit(limit + 1);
+  const { data, error } = await q;
+  if (error) throw new Error(`recentMessages: ${error.message}`);
+  return (data ?? [])
+    .filter((m) => !excludeWaMessageId || m.wa_message_id !== excludeWaMessageId)
+    .slice(0, limit)
+    .reverse()
+    .map((m) => ({ direction: m.direction, text: m.text }));
+}
