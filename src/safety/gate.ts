@@ -84,7 +84,7 @@ export class SafetyGate {
   /** Called instead of running a sensitive tool. Nothing is executed here. */
   async request(userId: string, tool: string, args: unknown, summary: string): Promise<RequestResult> {
     if (await this.overCap(userId, tool)) {
-      return { ok: false, reason: `Daily limit reached: Errand sends at most ${DAILY_EMAIL_CAP} emails per day.` };
+      return { ok: false, reason: `Daily limit reached: MyPaddy sends at most ${DAILY_EMAIL_CAP} emails per day.` };
     }
     await this.deps.store.expireWaiting(userId);
     const action = await this.deps.store.createPending({

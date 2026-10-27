@@ -52,7 +52,7 @@ function toEntry(p: any): RegisterEntry {
 async function fetchFromGreenbook(nafdacNo: string): Promise<RegisterEntry[]> {
   const params = new URLSearchParams({ draw: "1", start: "0", length: "25", "search[value]": nafdacNo, "search[regex]": "false" });
   const res = await fetchRetry(`${BASE}?${params}`, {
-    headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; Errand/0.1)" },
+    headers: { "X-Requested-With": "XMLHttpRequest", Accept: "application/json", "User-Agent": "Mozilla/5.0 (compatible; MyPaddy/0.1)" },
     signal: AbortSignal.timeout(12_000),
   });
   if (!res.ok) throw new Error(`Greenbook HTTP ${res.status}`);

@@ -21,7 +21,7 @@ const bundled = ffmpegStatic as unknown as string | null;
 const ffmpegPath = process.env.FFMPEG_PATH || (bundled && existsSync(bundled) ? bundled : "ffmpeg");
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "errand-"));
+  const dir = await mkdtemp(join(tmpdir(), "mypaddy-"));
   try {
     return await fn(dir);
   } finally {

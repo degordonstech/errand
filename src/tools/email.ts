@@ -9,7 +9,7 @@ export interface OutgoingEmail {
   to: string;
   subject: string;
   text: string;
-  /** Shown as the sender name, e.g. "Gold Foods via Errand". */
+  /** Shown as the sender name, e.g. "Gold Foods via MyPaddy". */
   senderName?: string;
   attachments?: { filename: string; content: Buffer }[];
 }
@@ -22,7 +22,7 @@ export interface SendResult {
 
 function fromAddress(senderName?: string): string {
   const address = config.EMAIL_FROM.match(/<([^>]+)>/)?.[1] ?? config.EMAIL_FROM;
-  return `${senderName ? `${senderName} via Errand` : "Errand"} <${address}>`;
+  return `${senderName ? `${senderName} via MyPaddy` : "MyPaddy"} <${address}>`;
 }
 
 const isNetworkError = (e: { name?: string; message?: string }) =>
@@ -74,7 +74,7 @@ export const sendEmailTool = defineTool({
   async run({ to, subject, body }, { user, actionId }) {
     const res = await sendEmail(
       { to, subject, text: body, senderName: user.business_name ?? user.name ?? undefined },
-      actionId ? `errand-${actionId}` : undefined,
+      actionId ? `mypaddy-${actionId}` : undefined,
     );
     return {
       message: res.redirectedTo ? `Sent (test mode: delivered to your test inbox, addressed to ${to}).` : `Sent to ${to}.`,

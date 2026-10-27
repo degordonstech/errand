@@ -56,7 +56,7 @@ export async function renderInvoicePdf(inv: InvoiceData): Promise<Buffer> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Invoice ${inv.number}`);
   doc.setAuthor(safe(inv.seller.name));
-  doc.setCreator("Errand");
+  doc.setCreator("MyPaddy");
 
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);

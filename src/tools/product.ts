@@ -11,7 +11,7 @@ export const checkProduct = defineTool({
   name: "check_product",
   description:
     "Check a drug or product pack against the NAFDAC Greenbook register. Read every side of the pack in the photos or video first, " +
-    "then pass exactly what is printed. Errand looks the number up, compares it and shows the verdict to the user. " +
+    "then pass exactly what is printed. MyPaddy looks the number up, compares it and shows the verdict to the user. " +
     "Never guess characters you cannot read: lower the confidence instead.",
   sensitive: false,
   schema: z.object({

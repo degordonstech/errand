@@ -5,7 +5,7 @@ import type { SafetyGate } from "../safety/gate.js";
 import { cleanReply } from "../text.js";
 import { getTool, toModelTools, tools as allTools } from "../tools/index.js";
 import type { Tool, ToolContext } from "../tools/types.js";
-import { APPROVAL_PROMPT } from "../whatsapp/send.js";
+import { APPROVAL_PROMPT } from "../telegram/send.js";
 import { meta, retryModelNotFound, SPARK_MAX_TOKENS } from "./client.js";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -52,7 +52,9 @@ export interface AgentDeps {
   logRun?: (tool: string, args: unknown, result: unknown, ok: boolean) => Promise<void>;
 }
 
-const CLAIMS_SENDING = /\b(sent|sending|(re)?send(ing)? (it|this|that|now)|i('| wi)ll (now )?(re)?(send|email|forward)|emailed|on its way|done)\b/i;
+// English and Pidgin ("na to send am now", "I don send am", "make I send am").
+const CLAIMS_SENDING =
+  /\b(sent|sending|(re)?send(ing)? (it|this|that|now|am)|i('| wi)ll (now )?(re)?(send|email|forward)|emailed|on its way|done|don send|go send)\b/i;
 
 export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<string> {
   const complete = deps.complete ?? sparkComplete;

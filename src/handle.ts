@@ -3,20 +3,32 @@ import { runAgent } from "./ai/agent.js";
 import { systemPrompt } from "./ai/prompts.js";
 import { transcribe } from "./ai/transcribe.js";
 import { imagePart, pdfPart, videoParts } from "./ai/vision.js";
-import { getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
-import { logger, maskPhone } from "./log.js";
+import { config } from "./config.js";
+import { countInboundSince, getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
+import { logger, maskId } from "./log.js";
 import { waitingForUser } from "./jobs/queue.js";
-import { classifyReply, STALE_BUTTON } from "./safety/gate.js";
+import { classifyReply, STALE_BUTTON, startOfLagosDay } from "./safety/gate.js";
 import { gate } from "./safety/instance.js";
 import { logAction } from "./tools/log.js";
 import { loadMemory } from "./tools/memory.js";
-import { downloadMedia } from "./whatsapp/media.js";
-import { APPROVAL_PROMPT, markReadAndTyping, parseApprovalButton, sendApproval, sendText } from "./whatsapp/send.js";
-import type { InboundMessage } from "./whatsapp/types.js";
+import { downloadFile } from "./telegram/api.js";
+import { APPROVAL_PROMPT, keepTyping, parseApprovalButton, sendApproval, sendText, settleButtons } from "./telegram/send.js";
+import type { InboundMedia, InboundMessage } from "./telegram/types.js";
 
 type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
 
 const HISTORY_LIMIT = 20;
+/** Telegram lets bots download files up to 20 MB. */
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+const WELCOME =
+  "Hi, I'm *MyPaddy*. I remember things for you, remind you before it's too late, check if things are fake, and handle small tasks like invoices and replies to letters.\n\n" +
+  "Talk to me like a friend: type, send a voice note, a photo, a video or a PDF. Nothing is ever sent for you without your YES.\n\n" +
+  'Try: "What can you do?"';
+
+const TOO_LARGE = "That file is too big for me to open (the limit is 20 MB). Could you send a shorter video or a smaller file?";
+
+class FileTooLarge extends Error {}
 
 interface Inbound {
   /** What the user said: text, caption or voice transcript. */
@@ -27,33 +39,40 @@ interface Inbound {
   label: string;
 }
 
+async function download(media: InboundMedia): Promise<Buffer> {
+  if (media.size && media.size > MAX_DOWNLOAD_BYTES) throw new FileTooLarge();
+  return downloadFile(media.id);
+}
+
 async function readInbound(msg: InboundMessage, memory: Record<string, string>): Promise<Inbound> {
   const caption = msg.text?.trim() ?? "";
+  const media = msg.media;
   switch (msg.kind) {
     case "text":
       return { text: caption, parts: [], label: caption };
     case "voice": {
-      const audio = await downloadMedia(msg.media!.id);
+      const audio = await download(media!);
       const keywords = Object.values(memory).filter((v) => v.length <= 40);
-      const transcript = await transcribe(audio.data, keywords);
+      const transcript = await transcribe(audio, keywords);
       return { text: transcript, parts: [], label: transcript ? `[voice note] ${transcript}` : "[voice note]" };
     }
     case "image": {
-      const img = await downloadMedia(msg.media!.id);
-      return { text: caption, parts: [imagePart(img.data, img.mimeType)], label: `[photo]${caption ? ` ${caption}` : ""}` };
+      const img = await download(media!);
+      return { text: caption, parts: [imagePart(img, media!.mimeType)], label: `[photo]${caption ? ` ${caption}` : ""}` };
     }
     case "video": {
-      const vid = await downloadMedia(msg.media!.id);
-      return { text: caption, parts: await videoParts(vid.data), label: `[video]${caption ? ` ${caption}` : ""}` };
+      const vid = await download(media!);
+      return { text: caption, parts: await videoParts(vid), label: `[video]${caption ? ` ${caption}` : ""}` };
     }
     case "doc": {
-      const file = await downloadMedia(msg.media!.id);
-      const name = msg.media!.filename ?? "document";
-      if (file.mimeType === "application/pdf") {
-        return { text: caption, parts: [pdfPart(file.data, name)], label: `[pdf: ${name}]${caption ? ` ${caption}` : ""}` };
+      const name = media!.filename ?? "document";
+      if (media!.mimeType === "application/pdf") {
+        const file = await download(media!);
+        return { text: caption, parts: [pdfPart(file, name)], label: `[pdf: ${name}]${caption ? ` ${caption}` : ""}` };
       }
-      if (file.mimeType.startsWith("image/")) {
-        return { text: caption, parts: [imagePart(file.data, file.mimeType)], label: `[photo]${caption ? ` ${caption}` : ""}` };
+      if (media!.mimeType.startsWith("image/")) {
+        const file = await download(media!);
+        return { text: caption, parts: [imagePart(file, media!.mimeType)], label: `[photo]${caption ? ` ${caption}` : ""}` };
       }
       return { text: caption, parts: [], label: `[file: ${name}, type not supported]` };
     }
@@ -62,21 +81,22 @@ async function readInbound(msg: InboundMessage, memory: Record<string, string>):
   }
 }
 
-async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: Record<string, string>): Promise<string> {
+async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: Record<string, string>, earlier: ContentPart[]): Promise<string> {
   if (msg.kind === "other") return "I can work with text, voice notes, photos, videos and PDFs. Send me one of those.";
-  if (!inbound.text && !inbound.parts.length) {
+  if (!inbound.text && !inbound.parts.length && !earlier.length) {
     return msg.kind === "voice"
       ? "I could not make out that voice note. Could you try again?"
       : "I can read photos and PDFs. That file type is not one I can open yet.";
   }
+  if (/^\/start\b/.test(inbound.text)) return WELCOME;
 
-  // A bare YES or NO answers the user's own waiting action, tapped, typed or spoken.
-  const tapped = parseApprovalButton(msg.buttonId);
-  if (tapped) return (await gate.answer(user.id, tapped.decision, tapped.actionId)) ?? STALE_BUTTON;
+  // A bare YES or NO answers the user's own waiting action, typed or spoken.
   if (!inbound.parts.length) {
     const answer = await gate.answer(user.id, inbound.text);
     if (answer) return answer;
   }
+  // Nothing was waiting, so a "yes" is about the media they just sent ("Should I check it?" "Yes").
+  inbound.parts = [...earlier, ...inbound.parts];
 
   const history = (await recentMessages(user.id, HISTORY_LIMIT, msg.id))
     .filter((m) => m.text)
@@ -116,16 +136,47 @@ async function followUpIsQueued(userKey: string): Promise<boolean> {
 async function sendAnswer(user: User, answer: string): Promise<string | undefined> {
   if (answer.endsWith(APPROVAL_PROMPT)) {
     const action = await gate.waiting(user.id).catch(() => null);
-    if (action) return sendApproval(user.wa_id, answer.slice(0, -APPROVAL_PROMPT.length).trim(), action.id);
+    if (action) return sendApproval(user.chat_id, answer.slice(0, -APPROVAL_PROMPT.length).trim(), action.id);
   }
-  return sendText(user.wa_id, answer);
+  return sendText(user.chat_id, answer);
+}
+
+/** A tapped Yes or No button. Taps never count towards the daily limit. */
+async function handleTap(user: User, msg: InboundMessage): Promise<void> {
+  await settleButtons(msg.from, msg.callback!);
+  const tapped = parseApprovalButton(msg.buttonId);
+  if (!tapped) return;
+  await saveMessage(user.id, "in", "text", tapped.decision, msg.id);
+  let answer: string;
+  try {
+    answer = (await gate.answer(user.id, tapped.decision, tapped.actionId)) ?? STALE_BUTTON;
+  } catch (err) {
+    logger.error({ err, from: maskId(msg.from) }, "button handling failed");
+    answer = "Something went wrong on my side. Nothing was sent. Please try again in a moment.";
+  }
+  const outId = await sendText(user.chat_id, answer);
+  await saveMessage(user.id, "out", "text", answer, outId);
+}
+
+/** True when the user has used up today's messages. Tells them once, then stays quiet. */
+async function overDailyLimit(user: User, msg: InboundMessage): Promise<boolean> {
+  const used = await countInboundSince(user.id, startOfLagosDay(new Date())).catch(() => 0);
+  if (used < config.DAILY_MESSAGE_LIMIT) return false;
+  await saveMessage(user.id, "in", msg.kind, "[over daily limit]", msg.id);
+  if (used === config.DAILY_MESSAGE_LIMIT) {
+    await sendText(user.chat_id, "That's all I can do for today. Your daily limit resets at midnight, Lagos time. Talk tomorrow!");
+  }
+  logger.info({ from: maskId(msg.from) }, "daily message limit reached");
+  return true;
 }
 
 export async function handleMessage(msg: InboundMessage): Promise<void> {
   const started = Date.now();
-  await markReadAndTyping(msg.id);
   const user = await getOrCreateUser(msg.from, msg.profileName);
+  if (msg.callback) return handleTap(user, msg);
+  if (await overDailyLimit(user, msg)) return;
 
+  const stopTyping = keepTyping(msg.from);
   let answer: string;
   try {
     const memory = await loadMemory(user.id);
@@ -141,20 +192,27 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
       // Keep it for the next message too, in case the user answers a question about it.
       heldMedia.set(msg.from, { parts: [...earlier, ...inbound.parts], at: Date.now() });
       if (await followUpIsQueued(msg.from)) {
-        logger.info({ from: maskPhone(msg.from), kind: msg.kind }, "media held for the next message");
+        logger.info({ from: maskId(msg.from), kind: msg.kind }, "media held for the next message");
         return;
       }
     }
-    // A bare YES or NO answers a waiting action and must reach the gate on its own.
-    if (earlier.length && !classifyReply(inbound.text)) inbound.parts = [...earlier, ...inbound.parts];
+    // A bare YES or NO must reach the gate on its own first; reply() adds the held media
+    // back if no action was waiting.
+    const isAnswer = Boolean(classifyReply(inbound.text));
+    if (!isAnswer) inbound.parts = [...earlier, ...inbound.parts];
 
-    answer = await reply(user, msg, inbound, memory);
+    answer = await reply(user, msg, inbound, memory, isAnswer ? earlier : []);
   } catch (err) {
-    logger.error({ err, from: maskPhone(msg.from), kind: msg.kind }, "handling failed");
-    answer = "Something went wrong on my side. Please send that again in a moment.";
+    if (err instanceof FileTooLarge) answer = TOO_LARGE;
+    else {
+      logger.error({ err, from: maskId(msg.from), kind: msg.kind }, "handling failed");
+      answer = "Something went wrong on my side. Please send that again in a moment.";
+    }
+  } finally {
+    stopTyping();
   }
 
   const outId = await sendAnswer(user, answer);
   await saveMessage(user.id, "out", "text", answer, outId);
-  logger.info({ from: maskPhone(msg.from), kind: msg.kind, rawType: msg.rawType, ms: Date.now() - started }, "message handled");
+  logger.info({ from: maskId(msg.from), kind: msg.kind, rawType: msg.rawType, ms: Date.now() - started }, "message handled");
 }

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { runAgent, type Complete } from "../src/ai/agent.js";
 import { classifyReply, DAILY_EMAIL_CAP, SafetyGate, STALE_BUTTON, startOfLagosDay, type GateStore, type PendingAction } from "../src/safety/gate.js";
-import { parseApprovalButton } from "../src/whatsapp/send.js";
+import { parseApprovalButton } from "../src/telegram/send.js";
 import type { ActionLogEntry } from "../src/tools/log.js";
 import { defineTool } from "../src/tools/types.js";
 
@@ -247,6 +247,7 @@ describe("agent with the gate", () => {
     expect(await run("I will send it now.")).toMatch(/^Email a@example.com/);
     expect(await run("Done, sending this to them.")).toMatch(/^Email a@example.com/);
     expect(await run("I'll resend invoice INV-0001 to Chidi now.")).toMatch(/^Email a@example.com/);
+    expect(await run("Got the email, na to send am now.")).toMatch(/^Email a@example.com/);
   });
 
   it("shows a tool's explanation above the approval request, in place of the model's text", async () => {

@@ -1,6 +1,6 @@
-# Errand
+# MyPaddy
 
-Errand is an agent that runs inside WhatsApp. Send it a text, voice note, photo, video or PDF and it handles the job: writes and sends invoices, checks a drug's NAFDAC registration, or explains a letter and drafts the reply. It never sends anything on your behalf until you reply YES.
+MyPaddy is a friend in your Telegram that remembers things for you, reminds you before it is too late, checks whether things are fake, and handles small tasks such as invoices and replies to letters. Send it a text, voice note, photo, video or PDF, in English or Nigerian Pidgin. It never sends anything on your behalf until you say YES.
 
 Built during the Meta Global AI Developer Hackathon, Oct 26 to Nov 4 2026.
 

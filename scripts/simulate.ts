@@ -1,8 +1,9 @@
-// Sends a signed fake WhatsApp webhook to a running server, for local testing without a phone.
-// Usage: npx tsx scripts/simulate.ts "message text" [--from 234...] [--url http://localhost:3000/webhook]
-//        npx tsx scripts/simulate.ts "caption" --file letter.pdf   (uploads the file to WhatsApp first, then sends it as a document or image)
+// Sends a fake Telegram update to a running server, for testing without typing on a phone.
+// Usage: npx tsx scripts/simulate.ts "message text" --chat <your chat id> [--url http://localhost:3000/telegram/webhook]
+//        npx tsx scripts/simulate.ts "caption" --chat <id> --file letter.pdf
+// With --file, the bot first sends the file into your chat to get a Telegram file id, then
+// sends the server an update as if you had sent that file yourself.
 import "dotenv/config";
-import { createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 
@@ -12,61 +13,50 @@ const flag = (name: string) => {
   return i >= 0 ? args.splice(i, 2)[1] : undefined;
 };
 
-const url = flag("url") ?? `http://localhost:${process.env.PORT ?? 3000}/webhook`;
-const from = flag("from") ?? (process.env.ALLOWED_NUMBERS ?? "").split(",")[0].replace(/\D/g, "");
+const url = flag("url") ?? `http://localhost:${process.env.PORT ?? 3000}/telegram/webhook`;
+const chatId = flag("chat");
 const file = flag("file");
 const text = args.join(" ") || (file ? "" : "hello");
+if (!chatId) throw new Error("--chat is required: your Telegram chat id with the bot");
+
+const KINDS: Record<string, { method: string; field: string; mime: string }> = {
+  ".jpg": { method: "sendPhoto", field: "photo", mime: "image/jpeg" },
+  ".jpeg": { method: "sendPhoto", field: "photo", mime: "image/jpeg" },
+  ".png": { method: "sendPhoto", field: "photo", mime: "image/png" },
+  ".mp4": { method: "sendVideo", field: "video", mime: "video/mp4" },
+  ".ogg": { method: "sendVoice", field: "voice", mime: "audio/ogg" },
+  ".pdf": { method: "sendDocument", field: "document", mime: "application/pdf" },
+};
 
 async function upload(path: string) {
-  const mime = ({ ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4", ".ogg": "audio/ogg" } as Record<string, string>)[extname(path).toLowerCase()];
-  if (!mime) throw new Error("unsupported file type");
+  const kind = KINDS[extname(path).toLowerCase()];
+  if (!kind) throw new Error("unsupported file type");
   const form = new FormData();
-  form.append("messaging_product", "whatsapp");
-  form.append("type", mime);
-  form.append("file", new Blob([readFileSync(path)], { type: mime }), basename(path));
-  const res = await fetch(`https://graph.facebook.com/v23.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
-    body: form,
-  });
-  const json = (await res.json()) as { id?: string };
-  if (!json.id) throw new Error(`upload failed: HTTP ${res.status}`);
-  return { id: json.id, mime };
+  form.append("chat_id", chatId!);
+  form.append(kind.field, new Blob([readFileSync(path)], { type: kind.mime }), basename(path));
+  const res = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/${kind.method}`, { method: "POST", body: form });
+  const json = (await res.json()) as { ok: boolean; result?: Record<string, any> };
+  if (!json.ok || !json.result) throw new Error(`upload failed: HTTP ${res.status}`);
+  // The bot's own message carries the file; reuse its file object as if the user sent it.
+  return { field: kind.field, value: json.result[kind.field] };
 }
 
 const media = file ? await upload(file) : null;
-const message = !media
-  ? { type: "text", text: { body: text } }
-  : media.mime.startsWith("image/")
-    ? { type: "image", image: { id: media.id, mime_type: media.mime, caption: text || undefined } }
-    : media.mime === "video/mp4"
-      ? { type: "video", video: { id: media.id, mime_type: media.mime, caption: text || undefined } }
-      : media.mime === "audio/ogg"
-        ? { type: "audio", audio: { id: media.id, mime_type: media.mime, voice: true } }
-        : { type: "document", document: { id: media.id, mime_type: media.mime, filename: basename(file!), caption: text || undefined } };
-
-const payload = {
-  object: "whatsapp_business_account",
-  entry: [
-    {
-      id: "0",
-      changes: [
-        {
-          field: "messages",
-          value: {
-            messaging_product: "whatsapp",
-            metadata: { phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID },
-            messages: [
-              { id: `wamid.sim-${randomUUID()}`, from, timestamp: String(Math.floor(Date.now() / 1000)), ...message },
-            ],
-          },
-        },
-      ],
-    },
-  ],
+const message: Record<string, unknown> = {
+  message_id: Math.floor(Math.random() * 1e9),
+  date: Math.floor(Date.now() / 1000),
+  chat: { id: Number(chatId), type: "private" },
+  from: { id: Number(chatId), first_name: "Simulator" },
 };
+if (!media) message.text = text;
+else {
+  message[media.field] = media.value;
+  if (text) message.caption = text;
+}
 
-const body = JSON.stringify(payload);
-const signature = `sha256=${createHmac("sha256", process.env.WHATSAPP_APP_SECRET ?? "").update(body).digest("hex")}`;
-const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Hub-Signature-256": signature }, body });
+const res = await fetch(url, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "X-Telegram-Bot-Api-Secret-Token": process.env.TELEGRAM_WEBHOOK_SECRET ?? "" },
+  body: JSON.stringify({ update_id: Math.floor(Math.random() * 1e9), message }),
+});
 console.log(`POST ${url} -> HTTP ${res.status}`);

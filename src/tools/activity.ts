@@ -29,7 +29,7 @@ const STATUS: Record<string, string> = {
 
 export const activityLog = defineTool({
   name: "activity_log",
-  description: "List what Errand did for the user: every action, what was asked, approved, declined or sent. Use for 'what did you do today?'.",
+  description: "List what MyPaddy did for the user: every action, what was asked, approved, declined or sent. Use for 'what did you do today?'.",
   sensitive: false,
   schema: z.object({ period: z.enum(["today", "yesterday", "week"]).default("today") }),
   async run({ period }, { user }) {

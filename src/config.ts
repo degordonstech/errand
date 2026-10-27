@@ -1,16 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
 
-const csv = z
-  .string()
-  .default("")
-  .transform((s) =>
-    s
-      .split(",")
-      .map((n) => n.replace(/\D/g, ""))
-      .filter(Boolean),
-  );
-
 const schema = z.object({
   PORT: z.coerce.number().int().default(3000),
   LOG_LEVEL: z.string().default("info"),
@@ -22,22 +12,22 @@ const schema = z.object({
   /** Set when META_API_BASE_URL points at the Cloudflare relay (deploy/cloudflare). */
   META_RELAY_KEY: z.string().default(""),
 
-  WHATSAPP_TOKEN: z.string().min(1),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
-  WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().default(""),
-  WHATSAPP_VERIFY_TOKEN: z.string().min(16),
-  WHATSAPP_APP_SECRET: z.string().min(1),
-  WHATSAPP_GRAPH_VERSION: z.string().default("v23.0"),
+  TELEGRAM_BOT_TOKEN: z.string().min(1),
+  /** Telegram sends it back in a header on every webhook call, so forged calls can be rejected. */
+  TELEGRAM_WEBHOOK_SECRET: z.string().regex(/^[A-Za-z0-9_-]{32,256}$/),
+  /** "polling" for local development without a public URL. */
+  TELEGRAM_MODE: z.enum(["webhook", "polling"]).default("webhook"),
 
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_KEY: z.string().min(1),
 
   RESEND_API_KEY: z.string().default(""),
-  EMAIL_FROM: z.string().default("Errand <onboarding@resend.dev>"),
+  EMAIL_FROM: z.string().default("MyPaddy <onboarding@resend.dev>"),
   DEV_EMAIL_TO: z.string().default(""),
 
   CRON_SECRET: z.string().min(32),
-  ALLOWED_NUMBERS: csv,
+  /** Messages a user can send per Lagos day, to keep model costs in check. */
+  DAILY_MESSAGE_LIMIT: z.coerce.number().int().positive().default(60),
 });
 
 const parsed = schema.safeParse(process.env);

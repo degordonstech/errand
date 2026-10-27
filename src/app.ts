@@ -1,20 +1,18 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import { config } from "./config.js";
 import { claimMessage } from "./db/supabase.js";
 import { handleMessage } from "./handle.js";
 import { enqueueForUser } from "./jobs/queue.js";
 import { runReminders } from "./jobs/reminders.js";
-import { logger, maskPhone } from "./log.js";
-import { registerWebhook } from "./whatsapp/webhook.js";
+import { logger, maskId } from "./log.js";
+import { registerWebhook, sameSecret, type WebhookDeps } from "./telegram/webhook.js";
 
-/** Compares hashes so neither length nor content leaks through timing. */
-function sameSecret(given: string | undefined, expected: string): boolean {
-  if (!given) return false;
-  const a = createHash("sha256").update(given).digest();
-  const b = createHash("sha256").update(expected).digest();
-  return timingSafeEqual(a, b);
-}
+/** Where every inbound Telegram update goes, from the webhook or from local polling. */
+export const inboundDeps: WebhookDeps = {
+  claimMessage,
+  enqueue: (msg) =>
+    enqueueForUser(msg.from, () => handleMessage(msg).catch((err) => logger.error({ err, from: maskId(msg.from) }, "job failed"))),
+};
 
 export function buildApp() {
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: true, bodyLimit: 2 * 1024 * 1024 });
@@ -22,13 +20,7 @@ export function buildApp() {
   // RENDER_GIT_COMMIT is set by Render; it shows which commit is live.
   app.get("/health", async () => ({ ok: true, commit: process.env.RENDER_GIT_COMMIT?.slice(0, 7) ?? null }));
 
-  registerWebhook(app, {
-    claimMessage,
-    enqueue: (msg) =>
-      enqueueForUser(msg.from, () =>
-        handleMessage(msg).catch((err) => logger.error({ err, from: maskPhone(msg.from) }, "job failed")),
-      ),
-  });
+  registerWebhook(app, inboundDeps);
 
   // Called hourly by cron-job.org. ?key= is required; ?min_age_hours= shortens the wait for demos.
   app.route({

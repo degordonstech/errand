@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { db, type User } from "../db/supabase.js";
 import { formatDate, formatMoney, invoiceTotal, renderInvoicePdf, type InvoiceData, type InvoiceItem } from "../invoice/pdf.js";
-import { uploadMedia } from "../whatsapp/media.js";
-import { sendDocument } from "../whatsapp/send.js";
+import { sendDocument } from "../telegram/send.js";
 import { sendEmail } from "./email.js";
 import { loadMemory } from "./memory.js";
 import { defineTool } from "./types.js";
@@ -44,7 +43,7 @@ async function nextInvoiceNumber(userId: string): Promise<string> {
   return `INV-${String(last + 1).padStart(4, "0")}`;
 }
 
-/** Seller details come from what the user asked Errand to remember. Keys vary, so match loosely. */
+/** Seller details come from what the user asked MyPaddy to remember. Keys vary, so match loosely. */
 function sellerFrom(memory: Record<string, string>, user: User) {
   const find = (...patterns: RegExp[]) => Object.entries(memory).find(([k]) => patterns.every((p) => p.test(k)))?.[1];
   return {
@@ -168,8 +167,7 @@ export const createInvoice = defineTool({
     if (!row) throw new Error("create_invoice: could not allocate an invoice number");
 
     const { pdf } = await invoicePdf(row, user);
-    const mediaId = await uploadMedia(pdf, "application/pdf", fileName(row));
-    await sendDocument(user.wa_id, mediaId, fileName(row), `${row.number} for ${row.customer_name}: ${formatMoney(total)}`);
+    await sendDocument(user.chat_id, pdf, fileName(row), `${row.number} for ${row.customer_name}: ${formatMoney(total)}`);
 
     return {
       message: `Created ${row.number} for ${row.customer_name}, total ${formatMoney(total)}, due ${formatDate(due)}. The PDF has been sent to the user in this chat.`,
@@ -207,7 +205,7 @@ export const sendInvoice = defineTool({
         senderName: seller,
         attachments: [{ filename: fileName(inv), content: pdf }],
       },
-      actionId ? `errand-${actionId}` : undefined,
+      actionId ? `mypaddy-${actionId}` : undefined,
     );
     await db
       .from("invoices")
@@ -247,7 +245,7 @@ export const sendPaymentReminder = defineTool({
         senderName: seller,
         attachments: [{ filename: fileName(inv), content: pdf }],
       },
-      actionId ? `errand-${actionId}` : undefined,
+      actionId ? `mypaddy-${actionId}` : undefined,
     );
     await db.from("invoices").update({ reminded_at: new Date().toISOString() }).eq("id", inv.id);
     const where = res.redirectedTo ? `(test mode: delivered to your test inbox, addressed to ${inv.customer_email})` : `to ${inv.customer_email}`;

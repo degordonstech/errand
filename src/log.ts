@@ -5,7 +5,7 @@ export const logger = pino({
   redact: {
     paths: [
       "req.headers.authorization",
-      "req.headers['x-hub-signature-256']",
+      "req.headers['x-telegram-bot-api-secret-token']",
       "*.token",
       "*.apiKey",
       "*.email",
@@ -18,7 +18,7 @@ export const logger = pino({
     process.env.NODE_ENV === "production" ? undefined : { target: "pino-pretty", options: { translateTime: "HH:MM:ss", ignore: "pid,hostname" } },
 });
 
-/** 2348012345678 -> ***5678. Use whenever a phone number goes near a log line. */
-export function maskPhone(waId: string): string {
-  return waId.length > 4 ? `***${waId.slice(-4)}` : "***";
+/** 7012345678 -> ***5678. Use whenever a chat id or phone number goes near a log line. */
+export function maskId(id: string): string {
+  return id.length > 4 ? `***${id.slice(-4)}` : "***";
 }

@@ -1,4 +1,4 @@
--- Errand database schema.
+-- MyPaddy database schema.
 -- Run in the Supabase SQL editor. Safe to re-run.
 -- Only the server touches these tables, using the service_role key. RLS is on with no
 -- policies, so the anon and authenticated roles get nothing even if a key leaks.
@@ -7,7 +7,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.users (
   id            uuid primary key default gen_random_uuid(),
-  wa_id         text not null unique,
+  chat_id       text not null unique,
   name          text,
   business_name text,
   created_at    timestamptz not null default now()
@@ -27,10 +27,11 @@ create table if not exists public.messages (
   direction     text not null check (direction in ('in', 'out')),
   kind          text not null check (kind in ('text', 'voice', 'image', 'video', 'doc', 'other')),
   text          text,
-  wa_message_id text,
+  message_ref   text,
   created_at    timestamptz not null default now()
 );
 create index if not exists messages_user_created_idx on public.messages (user_id, created_at desc);
+create index if not exists messages_user_direction_created_idx on public.messages (user_id, direction, created_at desc);
 
 create table if not exists public.pending_actions (
   id         uuid primary key default gen_random_uuid(),
@@ -93,7 +94,7 @@ create table if not exists public.nafdac_cache (
 );
 
 create table if not exists public.processed_messages (
-  wa_message_id text primary key,
+  message_ref   text primary key,
   created_at    timestamptz not null default now()
 );
 
