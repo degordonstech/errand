@@ -77,6 +77,13 @@ describe("parseMessages", () => {
     expect(m).toMatchObject({ kind: "text", text: "YES" });
   });
 
+  it("keeps the id of a tapped reply button", () => {
+    const [m] = parseMessages(
+      wrap([{ id: "wamid.5", from: "1", timestamp: "1", type: "interactive", interactive: { type: "button_reply", button_reply: { id: "yes:abc", title: "Yes, go ahead" } } }]),
+    );
+    expect(m).toMatchObject({ kind: "text", text: "Yes, go ahead", buttonId: "yes:abc" });
+  });
+
   it("drops emoji reactions", () => {
     const out = parseMessages(wrap([{ id: "wamid.6", from: "1", timestamp: "1", type: "reaction", reaction: { message_id: "wamid.1", emoji: "x" } }]));
     expect(out).toEqual([]);

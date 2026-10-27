@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { runAgent, type Complete } from "../src/ai/agent.js";
-import { classifyReply, DAILY_EMAIL_CAP, SafetyGate, startOfLagosDay, type GateStore, type PendingAction } from "../src/safety/gate.js";
+import { classifyReply, DAILY_EMAIL_CAP, SafetyGate, STALE_BUTTON, startOfLagosDay, type GateStore, type PendingAction } from "../src/safety/gate.js";
+import { parseApprovalButton } from "../src/whatsapp/send.js";
 import type { ActionLogEntry } from "../src/tools/log.js";
 import { defineTool } from "../src/tools/types.js";
 
@@ -98,6 +99,26 @@ describe("SafetyGate", () => {
     expect(await gate.answer(ALICE, "yes")).toBeNull();
     expect(execute).not.toHaveBeenCalled();
     expect(store.logs.at(-1)?.status).toBe("declined");
+  });
+
+  it("a tapped button only answers the action it was sent with", async () => {
+    const { gate, execute } = setup();
+    const first = await ask(gate);
+    const second = await ask(gate);
+    if (!first.ok || !second.ok) throw new Error("not asked");
+    expect(await gate.answer(ALICE, "YES", first.action.id)).toBe(STALE_BUTTON);
+    expect(execute).not.toHaveBeenCalled();
+    expect(await gate.answer(ALICE, "YES", second.action.id)).toContain("sent");
+    // Tapping again after it ran changes nothing.
+    expect(await gate.answer(ALICE, "YES", second.action.id)).toBe(STALE_BUTTON);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads approval button ids", () => {
+    expect(parseApprovalButton("yes:abc-123")).toEqual({ decision: "YES", actionId: "abc-123" });
+    expect(parseApprovalButton("no:abc-123")).toEqual({ decision: "NO", actionId: "abc-123" });
+    expect(parseApprovalButton("menu:invoices")).toBeNull();
+    expect(parseApprovalButton(undefined)).toBeNull();
   });
 
   it("expires after 30 minutes", async () => {

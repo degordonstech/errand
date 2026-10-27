@@ -5,6 +5,7 @@ import type { SafetyGate } from "../safety/gate.js";
 import { cleanReply } from "../text.js";
 import { getTool, toModelTools, tools as allTools } from "../tools/index.js";
 import type { Tool, ToolContext } from "../tools/types.js";
+import { APPROVAL_PROMPT } from "../whatsapp/send.js";
 import { meta, retryModelNotFound, SPARK_MAX_TOKENS } from "./client.js";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -51,7 +52,6 @@ export interface AgentDeps {
   logRun?: (tool: string, args: unknown, result: unknown, ok: boolean) => Promise<void>;
 }
 
-const APPROVAL_PROMPT = "Reply *YES* to go ahead or *NO* to cancel.";
 const CLAIMS_SENDING = /\b(sent|sending|(re)?send(ing)? (it|this|that|now)|i('| wi)ll (now )?(re)?(send|email|forward)|emailed|on its way|done)\b/i;
 
 export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<string> {

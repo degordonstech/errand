@@ -49,7 +49,12 @@ export function parseMessages(payload: any): InboundMessage[] {
             // Emoji reactions to earlier messages need no reply.
             break;
           case "interactive":
-            out.push({ ...base, kind: "text", text: m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title });
+            out.push({
+              ...base,
+              kind: "text",
+              text: m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title,
+              buttonId: m.interactive?.button_reply?.id ?? m.interactive?.list_reply?.id,
+            });
             break;
           default:
             out.push({ ...base, kind: "other", rawType: m.type });

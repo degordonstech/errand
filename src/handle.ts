@@ -6,12 +6,12 @@ import { imagePart, pdfPart, videoParts } from "./ai/vision.js";
 import { getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
 import { logger, maskPhone } from "./log.js";
 import { waitingForUser } from "./jobs/queue.js";
-import { classifyReply } from "./safety/gate.js";
+import { classifyReply, STALE_BUTTON } from "./safety/gate.js";
 import { gate } from "./safety/instance.js";
 import { logAction } from "./tools/log.js";
 import { loadMemory } from "./tools/memory.js";
 import { downloadMedia } from "./whatsapp/media.js";
-import { markReadAndTyping, sendText } from "./whatsapp/send.js";
+import { APPROVAL_PROMPT, markReadAndTyping, parseApprovalButton, sendApproval, sendText } from "./whatsapp/send.js";
 import type { InboundMessage } from "./whatsapp/types.js";
 
 type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
@@ -70,7 +70,9 @@ async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: 
       : "I can read photos and PDFs. That file type is not one I can open yet.";
   }
 
-  // A bare YES or NO answers the user's own waiting action, typed or spoken.
+  // A bare YES or NO answers the user's own waiting action, tapped, typed or spoken.
+  const tapped = parseApprovalButton(msg.buttonId);
+  if (tapped) return (await gate.answer(user.id, tapped.decision, tapped.actionId)) ?? STALE_BUTTON;
   if (!inbound.parts.length) {
     const answer = await gate.answer(user.id, inbound.text);
     if (answer) return answer;
@@ -110,6 +112,15 @@ async function followUpIsQueued(userKey: string): Promise<boolean> {
   return false;
 }
 
+/** An approval request goes out with Yes and No buttons tied to the waiting action. */
+async function sendAnswer(user: User, answer: string): Promise<string | undefined> {
+  if (answer.endsWith(APPROVAL_PROMPT)) {
+    const action = await gate.waiting(user.id).catch(() => null);
+    if (action) return sendApproval(user.wa_id, answer.slice(0, -APPROVAL_PROMPT.length).trim(), action.id);
+  }
+  return sendText(user.wa_id, answer);
+}
+
 export async function handleMessage(msg: InboundMessage): Promise<void> {
   const started = Date.now();
   await markReadAndTyping(msg.id);
@@ -143,7 +154,7 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
     answer = "Something went wrong on my side. Please send that again in a moment.";
   }
 
-  const outId = await sendText(msg.from, answer);
+  const outId = await sendAnswer(user, answer);
   await saveMessage(user.id, "out", "text", answer, outId);
   logger.info({ from: maskPhone(msg.from), kind: msg.kind, rawType: msg.rawType, ms: Date.now() - started }, "message handled");
 }

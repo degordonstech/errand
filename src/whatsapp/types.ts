@@ -16,6 +16,8 @@ export interface InboundMessage {
   /** Body for text, caption for media, title for button replies. */
   text?: string;
   media?: InboundMedia;
+  /** The id of a tapped reply button or list row. */
+  buttonId?: string;
   /** WhatsApp's own type name, kept for logging messages Errand does not handle. */
   rawType?: string;
 }

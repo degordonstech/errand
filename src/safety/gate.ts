@@ -59,6 +59,8 @@ export function startOfLagosDay(now: Date): Date {
   return new Date(lagos.getTime() - 60 * 60 * 1000);
 }
 
+export const STALE_BUTTON = "That request was already answered or replaced by a newer one, so nothing changed.";
+
 export type RequestResult = { ok: true; action: PendingAction } | { ok: false; reason: string };
 
 export class SafetyGate {
@@ -72,6 +74,11 @@ export class SafetyGate {
     if (!this.deps.emailTools.has(tool)) return false;
     const sent = await this.deps.store.countSentSince(userId, this.deps.emailTools, startOfLagosDay(this.now()));
     return sent >= DAILY_EMAIL_CAP;
+  }
+
+  /** The action waiting for this user's answer, if any. */
+  waiting(userId: string): Promise<PendingAction | null> {
+    return this.deps.store.latestWaiting(userId);
   }
 
   /** Called instead of running a sensitive tool. Nothing is executed here. */
@@ -96,11 +103,13 @@ export class SafetyGate {
    * or null when the message is not an answer to a waiting action.
    * Lookups are always by the sender's own user id, so one user can never approve another's action.
    */
-  async answer(userId: string, text: string): Promise<string | null> {
+  async answer(userId: string, text: string, actionId?: string): Promise<string | null> {
     const decision = classifyReply(text);
     if (!decision) return null;
 
     const action = await this.deps.store.latestWaiting(userId);
+    // A tapped button names its action, so an old button can never approve a newer request.
+    if (actionId && action?.id !== actionId) return STALE_BUTTON;
     if (!action) return null;
 
     const { store } = this.deps;

@@ -3,7 +3,7 @@ import { formatMoney } from "../invoice/pdf.js";
 import { logger, maskPhone } from "../log.js";
 import { gate } from "../safety/instance.js";
 import { normaliseInvoiceNumber, sendPaymentReminder, type InvoiceRow } from "../tools/invoice.js";
-import { sendTemplate, sendText } from "../whatsapp/send.js";
+import { APPROVAL_PROMPT, sendApproval, sendTemplate } from "../whatsapp/send.js";
 
 const HOUR = 3_600_000;
 const TEMPLATE = "invoice_payment_reminder";
@@ -86,8 +86,9 @@ export async function runReminders(opts: { minAgeHours?: number; now?: Date } = 
       let text: string;
       let outId: string | undefined;
       if (await insideServiceWindow(user.id, now)) {
-        text = `${inv.customer_name} has not paid ${inv.number} (${amount}) yet.\n\n${summary}\n\nReply *YES* to send the reminder or *NO* to skip.`;
-        outId = await sendText(user.wa_id, text);
+        const body = `${inv.customer_name} has not paid ${inv.number} (${amount}) yet.\n\n${summary}`;
+        text = `${body}\n\n${APPROVAL_PROMPT}`;
+        outId = await sendApproval(user.wa_id, body, req.action.id);
       } else {
         text = `Invoice ${inv.number} for ${inv.customer_name} (${amount}) is still unpaid. Reply YES to email ${inv.customer_name} a payment reminder, or NO to skip.`;
         outId = await sendTemplate(user.wa_id, TEMPLATE, "en", [inv.number, inv.customer_name, amount]);
