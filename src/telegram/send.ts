@@ -118,3 +118,12 @@ export function keepTyping(chatId: string): () => void {
   const timer = setInterval(ping, 4500);
   return () => clearInterval(timer);
 }
+
+export async function sendPhoto(chatId: string, jpeg: Buffer, caption?: string): Promise<string | undefined> {
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("photo", new Blob([new Uint8Array(jpeg)], { type: "image/jpeg" }), "photo.jpg");
+  if (caption) form.append("caption", caption);
+  const res = await call<{ message_id: number }>("sendPhoto", form);
+  return String(res.message_id);
+}

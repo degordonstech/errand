@@ -1,11 +1,37 @@
 import { z } from "zod";
 import { db } from "../db/supabase.js";
 import { lookupNafdac, normaliseNafdacNo } from "../product/greenbook.js";
+import { markPack } from "../product/mark.js";
 import { decide, formatVerdict, type PackReading } from "../product/verdict.js";
+import { downloadFile } from "../telegram/api.js";
+import { sendPhoto } from "../telegram/send.js";
+import { logger } from "../log.js";
+import type { TurnFile } from "./types.js";
 import { defineTool } from "./types.js";
 
 /** The model sometimes writes the word "null" for a field it could not read. */
 const blank = (s: string | null | undefined) => (s && !/^(null|none|n\/?a|unknown|not visible)$/i.test(s.trim()) ? s : null);
+
+/**
+ * Sends the user's photo back with the pack outlined and the NAFDAC number boxed, so they can see
+ * exactly what was checked. A second, closer reading that disagrees is pointed out. Never blocks the verdict.
+ */
+async function showWhatWasRead(chatId: string, files: TurnFile[] | undefined, nafdacNo: string | null): Promise<void> {
+  const photo = files?.filter((f) => f.kind === "photo").at(-1);
+  if (!photo || !nafdacNo) return;
+  try {
+    const marked = await markPack(await downloadFile(photo.fileId));
+    if (!marked) return;
+    const second = marked.numberRead ? normaliseNafdacNo(marked.numberRead) : null;
+    const caption =
+      second && second !== nafdacNo
+        ? `Up close I read ${second}, not ${nafdacNo}. Check the number on the pack.`
+        : `The number I checked: ${nafdacNo}`;
+    await sendPhoto(chatId, marked.image, caption);
+  } catch (err) {
+    logger.warn({ err }, "could not mark the pack photo");
+  }
+}
 
 export const checkProduct = defineTool({
   name: "check_product",
@@ -27,7 +53,7 @@ export const checkProduct = defineTool({
     packaging_concerns: z.array(z.string().max(200)).max(8).optional().describe("Spelling mistakes, smudged or uneven print, missing details, tampered seals."),
     where_bought: z.string().max(150).optional().describe("Where the user says they bought it, if they said."),
   }),
-  async run(args, { user }) {
+  async run(args, { user, files }) {
     const pack: PackReading = {
       productName: blank(args.product_name),
       activeIngredient: blank(args.active_ingredient),
@@ -41,9 +67,12 @@ export const checkProduct = defineTool({
       packagingConcerns: args.packaging_concerns,
     };
 
+    // Marking the photo and looking the number up run side by side.
+    const marking = showWhatWasRead(user.chat_id, files, pack.nafdacNo);
     const canLookUp = pack.nafdacNo && ["high", "medium"].includes(pack.nafdacConfidence);
     const lookup = canLookUp ? await lookupNafdac(pack.nafdacNo!) : { ok: true as const, entries: [] };
     const verdict = decide(pack, lookup);
+    await marking;
     const offline = lookup.ok && "source" in lookup && lookup.source === "offline";
     const text = formatVerdict(verdict, offline ? "_The NAFDAC Greenbook could not be reached, so this used a saved copy of its entry._" : undefined);
 

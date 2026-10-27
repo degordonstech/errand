@@ -29,3 +29,29 @@ export const explainDocument = defineTool({
     return { message: "Explanation recorded and will be shown to the user.", showUser: text };
   },
 });
+
+export const reviewAgreement = defineTool({
+  name: "review_agreement",
+  description:
+    "Record your plain review of a contract, tenancy agreement, offer letter, loan form or terms the user is about to sign. " +
+    "Use it instead of explain_document for anything they would sign. Write every field in the user's language.",
+  sensitive: false,
+  schema: z.object({
+    what_it_is: z.string().min(1).max(300).describe("What it is, between whom."),
+    key_terms: z.string().min(1).max(800).describe("Money, length, notice period, renewal, what each side must do. Short lines."),
+    watch_out: z.string().min(1).max(800).describe("Clauses that are unusual, one-sided or costly: penalties, hidden fees, automatic renewal, forfeited deposits."),
+    ask_before_signing: z.string().max(500).optional().describe("Questions worth asking the other side before signing."),
+  }),
+  async run(args) {
+    const text = [
+      line("What it is", args.what_it_is),
+      line("Key terms", args.key_terms),
+      line("Watch out", args.watch_out),
+      line("Ask before you sign", args.ask_before_signing),
+      "_This is a plain reading to help you, not legal advice. For anything big, talk to a lawyer._",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    return { message: "Review recorded and will be shown to the user. Do not repeat it.", showUser: text };
+  },
+});

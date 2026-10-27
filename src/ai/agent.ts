@@ -15,7 +15,7 @@ type AssistantMessage = OpenAI.Chat.Completions.ChatCompletionMessage;
 export const MAX_STEPS = 6;
 
 // The model sometimes re-checks a pack or letter from earlier in the chat. One per message is enough.
-const ONCE_PER_TURN = new Set(["check_product", "explain_document"]);
+const ONCE_PER_TURN = new Set(["check_product", "explain_document", "review_agreement", "make_product_photo"]);
 const ONCE_PER_TURN_ERROR = "Already done for this message. Earlier packs and letters were answered before, so do not check them again.";
 
 export type Complete = (messages: ChatMessage[], tools: OpenAI.Chat.Completions.ChatCompletionTool[]) => Promise<AssistantMessage>;

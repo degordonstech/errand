@@ -1,11 +1,13 @@
 import { z } from "zod";
 import type OpenAI from "openai";
 import { activityLog } from "./activity.js";
-import { explainDocument } from "./document.js";
+import { explainDocument, reviewAgreement } from "./document.js";
 import { sendEmailTool } from "./email.js";
 import { createInvoice, listInvoices, markPaid, sendInvoice, sendPaymentReminder } from "./invoice.js";
 import { keepTools } from "./keep.js";
 import { forget, remember } from "./memory.js";
+import { makePdf } from "./pdfdoc.js";
+import { makeProductPhoto } from "./photo.js";
 import { checkProduct } from "./product.js";
 import { cancelReminder, listReminders, setReminder, setReminders, updateReminder } from "./reminders.js";
 import type { Tool } from "./types.js";
@@ -19,6 +21,8 @@ export const tools: Tool<any>[] = [
   updateReminder,
   cancelReminder,
   explainDocument,
+  reviewAgreement,
+  makePdf,
   sendEmailTool,
   createInvoice,
   sendInvoice,
@@ -26,6 +30,7 @@ export const tools: Tool<any>[] = [
   listInvoices,
   markPaid,
   checkProduct,
+  makeProductPhoto,
   activityLog,
   ...keepTools,
 ];

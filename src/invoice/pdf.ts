@@ -34,9 +34,9 @@ const RULE = rgb(0.85, 0.87, 0.9);
 const ACCENT = rgb(0.05, 0.4, 0.3);
 
 /** Strips characters the WinAnsi-encoded standard fonts cannot draw, so odd input never crashes rendering. */
-const safe = (s: string) => s.replace(/[^\x20-\x7E -ÿ]/g, "").trim();
+export const safe = (s: string) => s.replace(/[^\x20-\x7E -ÿ]/g, "").trim();
 
-function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
+export function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
   const lines: string[] = [];
   for (const para of safe(text).split(/\n/)) {
     let line = "";
