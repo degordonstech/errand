@@ -1,8 +1,18 @@
 import type { z } from "zod";
 import type { User } from "../db/supabase.js";
 
+/** A file the user sent in this turn, which a tool may keep. */
+export interface TurnFile {
+  kind: "photo" | "document" | "video" | "voice";
+  fileId: string;
+  mimeType: string;
+  filename?: string;
+}
+
 export interface ToolContext {
   user: User;
+  /** Files attached to the current message, or held from the one just before it. */
+  files?: TurnFile[];
   /** Set when running an approved action; used as an idempotency key for outside services. */
   actionId?: string;
 }

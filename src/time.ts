@@ -3,7 +3,7 @@ const OFFSET_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface Repeat {
-  every: "day" | "week" | "month";
+  every: "day" | "week" | "month" | "year";
   /** Every n days, weeks or months. Defaults to 1. */
   interval?: number;
   /** For weekly repeats: ISO weekdays, 1 = Monday ... 7 = Sunday. */
@@ -52,6 +52,7 @@ export function nextOccurrence(repeat: Repeat, from: Date, after: Date): Date | 
   for (let i = 0; i < 2000 && next.getTime() <= after.getTime(); i++) {
     if (repeat.every === "day") next = new Date(next.getTime() + interval * DAY_MS);
     else if (repeat.every === "month") next = addMonths(next, interval);
+    else if (repeat.every === "year") next = addMonths(next, 12 * interval);
     else if (repeat.weekdays?.length) {
       do next = new Date(next.getTime() + DAY_MS);
       while (!repeat.weekdays.includes(lagosWeekday(next)));

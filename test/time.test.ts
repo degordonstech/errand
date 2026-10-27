@@ -27,6 +27,7 @@ describe("nextOccurrence", () => {
     expect(toLagos(nextOccurrence({ every: "day" }, from, from)!)).toBe("2026-10-29T08:00");
     expect(toLagos(nextOccurrence({ every: "day", interval: 3 }, from, from)!)).toBe("2026-10-31T08:00");
     expect(toLagos(nextOccurrence({ every: "month" }, from, from)!)).toBe("2026-11-28T08:00");
+    expect(toLagos(nextOccurrence({ every: "year" }, from, from)!)).toBe("2027-10-28T08:00");
   });
 
   it("keeps the 31st on the last day of shorter months", () => {

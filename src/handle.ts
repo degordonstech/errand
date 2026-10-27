@@ -25,6 +25,7 @@ import {
 } from "./telegram/send.js";
 import { applyReminderTap } from "./tools/reminders.js";
 import type { InboundMedia, InboundMessage } from "./telegram/types.js";
+import type { TurnFile } from "./tools/types.js";
 
 type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
 
@@ -48,6 +49,13 @@ interface Inbound {
   parts: ContentPart[];
   /** Stored in history in place of the media itself. */
   label: string;
+}
+
+/** The file in a message, as tools can keep and resend it. */
+function turnFiles(msg: InboundMessage): TurnFile[] {
+  if (!msg.media) return [];
+  const kind = ({ image: "photo", video: "video", voice: "voice", doc: "document" } as const)[msg.kind as "image" | "video" | "voice" | "doc"];
+  return kind ? [{ kind, fileId: msg.media.id, mimeType: msg.media.mimeType, filename: msg.media.filename }] : [];
 }
 
 async function download(media: InboundMedia): Promise<Buffer> {
@@ -92,7 +100,14 @@ async function readInbound(msg: InboundMessage, memory: Record<string, string>):
   }
 }
 
-async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: Record<string, string>, earlier: ContentPart[]): Promise<string> {
+async function reply(
+  user: User,
+  msg: InboundMessage,
+  inbound: Inbound,
+  memory: Record<string, string>,
+  earlier: ContentPart[],
+  files: TurnFile[],
+): Promise<string> {
   if (msg.kind === "other") return "I can work with text, voice notes, photos, videos and PDFs. Send me one of those.";
   if (!inbound.text && !inbound.parts.length && !earlier.length) {
     return msg.kind === "voice"
@@ -117,7 +132,7 @@ async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: 
     : `${msg.kind === "voice" ? "(voice note transcript) " : ""}${inbound.text}`;
 
   return runAgent(
-    { ctx: { user }, system: systemPrompt({ user, memory, now: new Date() }), history, content },
+    { ctx: { user, files }, system: systemPrompt({ user, memory, now: new Date() }), history, content },
     {
       gate,
       logRun: (tool, args, result, ok) => logAction({ userId: user.id, tool, args, result: { value: result }, status: ok ? "done" : "failed" }),
@@ -132,7 +147,7 @@ async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: 
  */
 const HELD_MEDIA_MS = 10 * 60 * 1000;
 const FOLLOW_UP_WAIT_MS = 6000;
-const heldMedia = new Map<string, { parts: ContentPart[]; at: number }>();
+const heldMedia = new Map<string, { parts: ContentPart[]; files: TurnFile[]; at: number }>();
 
 async function followUpIsQueued(userKey: string): Promise<boolean> {
   for (let waited = 0; waited < FOLLOW_UP_WAIT_MS; waited += 500) {
@@ -224,11 +239,13 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
 
     const held = heldMedia.get(msg.from);
     heldMedia.delete(msg.from);
-    const earlier = held && Date.now() - held.at < HELD_MEDIA_MS ? held.parts : [];
+    const fresh = held && Date.now() - held.at < HELD_MEDIA_MS;
+    const earlier = fresh ? held.parts : [];
+    const files = [...(fresh ? held.files : []), ...turnFiles(msg)];
 
     if (inbound.parts.length && !inbound.text) {
       // Keep it for the next message too, in case the user answers a question about it.
-      heldMedia.set(msg.from, { parts: [...earlier, ...inbound.parts], at: Date.now() });
+      heldMedia.set(msg.from, { parts: [...earlier, ...inbound.parts], files, at: Date.now() });
       if (await followUpIsQueued(msg.from)) {
         logger.info({ from: maskId(msg.from), kind: msg.kind }, "media held for the next message");
         return;
@@ -239,7 +256,7 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
     const isAnswer = Boolean(classifyReply(inbound.text));
     if (!isAnswer) inbound.parts = [...earlier, ...inbound.parts];
 
-    answer = await reply(user, msg, inbound, memory, isAnswer ? earlier : []);
+    answer = await reply(user, msg, inbound, memory, isAnswer ? earlier : [], files);
   } catch (err) {
     if (err instanceof FileTooLarge) answer = TOO_LARGE;
     else {

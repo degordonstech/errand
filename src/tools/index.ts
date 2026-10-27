@@ -4,15 +4,17 @@ import { activityLog } from "./activity.js";
 import { explainDocument } from "./document.js";
 import { sendEmailTool } from "./email.js";
 import { createInvoice, listInvoices, markPaid, sendInvoice, sendPaymentReminder } from "./invoice.js";
+import { keepTools } from "./keep.js";
 import { forget, remember } from "./memory.js";
 import { checkProduct } from "./product.js";
-import { cancelReminder, listReminders, setReminder, updateReminder } from "./reminders.js";
+import { cancelReminder, listReminders, setReminder, setReminders, updateReminder } from "./reminders.js";
 import type { Tool } from "./types.js";
 
 export const tools: Tool<any>[] = [
   remember,
   forget,
   setReminder,
+  setReminders,
   listReminders,
   updateReminder,
   cancelReminder,
@@ -25,6 +27,7 @@ export const tools: Tool<any>[] = [
   markPaid,
   checkProduct,
   activityLog,
+  ...keepTools,
 ];
 
 const byName = new Map(tools.map((t) => [t.name, t]));

@@ -20,8 +20,8 @@ const whenSchema = z.string().describe('Lagos local time, "YYYY-MM-DDTHH:MM", fo
 
 const repeatSchema = z
   .object({
-    every: z.enum(["day", "week", "month"]),
-    interval: z.number().int().min(1).max(12).optional().describe("Every n days, weeks or months. Defaults to 1."),
+    every: z.enum(["day", "week", "month", "year"]),
+    interval: z.number().int().min(1).max(12).optional().describe("Every n days, weeks, months or years. Defaults to 1."),
     weekdays: z.array(z.number().int().min(1).max(7)).max(7).optional().describe("For weekly repeats: 1 = Monday ... 7 = Sunday."),
     until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Last date it may fire, YYYY-MM-DD."),
   })
@@ -82,6 +82,51 @@ export const setReminder = defineTool({
     return {
       message: `Reminder set: ${describeReminder(row, now)}.${args.picked_up_from_conversation ? " Tell the user in one line, and that they can say cancel." : ""}`,
       data: { reminder_id: row.id },
+    };
+  },
+});
+
+export const setReminders = defineTool({
+  name: "set_reminders",
+  description:
+    "Set many reminders in one go, from a timetable, an exam timetable, an invite, a flyer or a list of bills. " +
+    "Read every row of the photo first. One item per class slot, exam reminder or event reminder.",
+  sensitive: false,
+  schema: z.object({
+    source: z.enum(["timetable", "exams", "event", "bills", "other"]),
+    items: z
+      .array(
+        z.object({
+          text: z.string().min(1).max(300).describe('Short and specific, for example "CSC 201 in LT2 at 10:00".'),
+          when: whenSchema,
+          repeat: repeatSchema.optional(),
+        }),
+      )
+      .min(1)
+      .max(60),
+  }),
+  async run({ source, items }, { user }) {
+    const now = new Date();
+    const { count } = await db.from("reminders").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "active");
+    if ((count ?? 0) + items.length > MAX_ACTIVE_PER_USER) throw new Error(`That would pass the limit of ${MAX_ACTIVE_PER_USER} active reminders.`);
+
+    const rows: { user_id: string; text: string; due_at: string; repeat: Repeat | null; source: string }[] = [];
+    const skipped: string[] = [];
+    for (const item of items) {
+      const due = fromLagos(item.when) && firstOccurrence(fromLagos(item.when)!, item.repeat ?? null, now);
+      if (due) rows.push({ user_id: user.id, text: item.text.trim(), due_at: due.toISOString(), repeat: item.repeat ?? null, source });
+      else skipped.push(item.text);
+    }
+    if (rows.length) {
+      const { error } = await db.from("reminders").insert(rows);
+      if (error) throw new Error(`set_reminders: ${error.message}`);
+    }
+    const lines = rows.map((r) => `- ${describeReminder(r, now)}`).join("\n");
+    return {
+      message:
+        `Set ${rows.length} reminders:\n${lines}` +
+        (skipped.length ? `\nSkipped ${skipped.length} already in the past: ${skipped.join("; ")}.` : "") +
+        "\nTell the user briefly what was set (group by day, do not list every line if there are many) and that they can change any of it.",
     };
   },
 });

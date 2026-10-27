@@ -83,6 +83,15 @@ export function sendReminder(chatId: string, text: string, reminderId: string, r
   return sendMessage(chatId, text, { reply_markup: { inline_keyboard: [row] } });
 }
 
+const RESEND = { photo: ["sendPhoto", "photo"], document: ["sendDocument", "document"], video: ["sendVideo", "video"], voice: ["sendVoice", "voice"] } as const;
+
+/** Sends back a file Telegram already has, by its file id. */
+export async function sendStoredFile(chatId: string, kind: keyof typeof RESEND, fileId: string, caption?: string): Promise<string | undefined> {
+  const [method, field] = RESEND[kind];
+  const res = await call<{ message_id: number }>(method, { chat_id: chatId, [field]: fileId, ...(caption ? { caption } : {}) });
+  return String(res.message_id);
+}
+
 /** Stops the spinner on a tapped button and leaves the buttons in place. */
 export function answerTap(callbackId: string, toast?: string): Promise<unknown> {
   return call("answerCallbackQuery", { callback_query_id: callbackId, ...(toast ? { text: toast } : {}) }).catch(() => undefined);
