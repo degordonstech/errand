@@ -18,3 +18,8 @@ export function enqueueForUser(userKey: string, job: () => Promise<void>): void 
   }
   void q.add(() => global.add(job));
 }
+
+/** Messages from this user waiting behind the one being handled. */
+export function waitingForUser(userKey: string): number {
+  return perUser.get(userKey)?.size ?? 0;
+}

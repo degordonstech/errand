@@ -5,6 +5,8 @@ import { transcribe } from "./ai/transcribe.js";
 import { imagePart, pdfPart, videoParts } from "./ai/vision.js";
 import { getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
 import { logger, maskPhone } from "./log.js";
+import { waitingForUser } from "./jobs/queue.js";
+import { classifyReply } from "./safety/gate.js";
 import { gate } from "./safety/instance.js";
 import { logAction } from "./tools/log.js";
 import { loadMemory } from "./tools/memory.js";
@@ -91,6 +93,23 @@ async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: 
   );
 }
 
+/**
+ * People often send a photo or video first and say what they want in the next message,
+ * for example a video of a pack followed by a voice note. Media without a caption is held
+ * briefly and joined to the user's next message.
+ */
+const HELD_MEDIA_MS = 10 * 60 * 1000;
+const FOLLOW_UP_WAIT_MS = 6000;
+const heldMedia = new Map<string, { parts: ContentPart[]; at: number }>();
+
+async function followUpIsQueued(userKey: string): Promise<boolean> {
+  for (let waited = 0; waited < FOLLOW_UP_WAIT_MS; waited += 500) {
+    if (waitingForUser(userKey) > 0) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
 export async function handleMessage(msg: InboundMessage): Promise<void> {
   const started = Date.now();
   await markReadAndTyping(msg.id);
@@ -99,8 +118,25 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
   let answer: string;
   try {
     const memory = await loadMemory(user.id);
+    if (msg.kind === "video") await sendText(msg.from, "On it, looking at your video...");
     const inbound = await readInbound(msg, memory);
     await saveMessage(user.id, "in", msg.kind, inbound.label, msg.id);
+
+    const held = heldMedia.get(msg.from);
+    heldMedia.delete(msg.from);
+    const earlier = held && Date.now() - held.at < HELD_MEDIA_MS ? held.parts : [];
+
+    if (inbound.parts.length && !inbound.text) {
+      // Keep it for the next message too, in case the user answers a question about it.
+      heldMedia.set(msg.from, { parts: [...earlier, ...inbound.parts], at: Date.now() });
+      if (await followUpIsQueued(msg.from)) {
+        logger.info({ from: maskPhone(msg.from), kind: msg.kind }, "media held for the next message");
+        return;
+      }
+    }
+    // A bare YES or NO answers a waiting action and must reach the gate on its own.
+    if (earlier.length && !classifyReply(inbound.text)) inbound.parts = [...earlier, ...inbound.parts];
+
     answer = await reply(user, msg, inbound, memory);
   } catch (err) {
     logger.error({ err, from: maskPhone(msg.from), kind: msg.kind }, "handling failed");
