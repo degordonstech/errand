@@ -52,10 +52,10 @@ export async function sendEmail(email: OutgoingEmail, idempotencyKey?: string): 
   for (let attempt = 1; ; attempt++) {
     const { data, error } = await resend.emails.send(payload, idempotencyKey ? { idempotencyKey } : undefined);
     if (data && !error) return { id: data.id, redirectedTo: redirect };
-    if (!error || !isNetworkError(error) || !idempotencyKey || attempt >= 3) {
+    if (!error || !isNetworkError(error) || !idempotencyKey || attempt >= 5) {
       throw new Error(`email failed: ${error?.message ?? "no id returned"}`);
     }
-    await new Promise((r) => setTimeout(r, 500 * attempt));
+    await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
   }
 }
 

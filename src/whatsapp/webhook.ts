@@ -104,14 +104,17 @@ async function accept(messages: InboundMessage[], deps: WebhookDeps) {
       logger.info({ from: maskPhone(msg.from) }, "ignored message from number not on allowlist");
       continue;
     }
+    let fresh = true;
     try {
-      if (!(await deps.claimMessage(msg.id))) {
-        logger.debug({ id: msg.id }, "duplicate delivery skipped");
-        continue;
-      }
-      deps.enqueue(msg);
+      fresh = await deps.claimMessage(msg.id);
     } catch (err) {
-      logger.error({ err, id: msg.id }, "failed to accept message");
+      // Better to risk a rare duplicate reply than to drop the message.
+      logger.error({ err, id: msg.id }, "dedupe check failed, handling anyway");
     }
+    if (!fresh) {
+      logger.debug({ id: msg.id }, "duplicate delivery skipped");
+      continue;
+    }
+    deps.enqueue(msg);
   }
 }

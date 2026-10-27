@@ -9,7 +9,7 @@ function isTransient(err: unknown): boolean {
  * fetch with retries on network-level failures only (DNS blips, dropped sockets).
  * HTTP error statuses are returned as-is for the caller to handle.
  */
-export async function fetchRetry(url: string, init?: RequestInit, attempts = 3): Promise<Response> {
+export async function fetchRetry(url: string | URL, init?: RequestInit, attempts = 5): Promise<Response> {
   for (let i = 1; ; i++) {
     try {
       return await fetch(url, init);

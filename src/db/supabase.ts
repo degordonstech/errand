@@ -1,9 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 import { config } from "../config.js";
+import { fetchRetry } from "../net.js";
 import type { MessageKind } from "../whatsapp/types.js";
 
 export const db = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: (input, init) => fetchRetry(input instanceof Request ? input.url : input, init) },
 });
 
 export interface User {
