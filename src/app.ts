@@ -37,7 +37,9 @@ export function buildApp() {
       const q = req.query as Record<string, string | undefined>;
       if (!sameSecret(q.key ?? (req.headers["x-cron-key"] as string | undefined), config.CRON_SECRET)) return reply.code(401).send();
       const minAgeHours = q.min_age_hours !== undefined ? Math.max(0, Number(q.min_age_hours) || 0) : undefined;
-      return runReminders({ minAgeHours });
+      const result = await runReminders({ minAgeHours });
+      logger.info(result, "reminder run");
+      return result;
     },
   });
 
