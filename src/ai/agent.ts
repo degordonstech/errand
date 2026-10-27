@@ -22,7 +22,11 @@ const sparkComplete: Complete = async (messages, tools) => {
     messages,
     tools,
   });
-  return res.choices[0].message;
+  const choice = res.choices[0];
+  if (!choice.message.content && !choice.message.tool_calls?.length) {
+    logger.warn({ finish: choice.finish_reason, usage: res.usage }, "model returned an empty message");
+  }
+  return choice.message;
 };
 
 export interface AgentInput {
@@ -60,9 +64,15 @@ export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<stri
   const shown: string[] = [];
 
   for (let step = 1; step <= MAX_STEPS; step++) {
-    const msg = await complete(messages, modelTools);
+    let msg = await complete(messages, modelTools);
+    // The model occasionally returns nothing at all. One more try almost always answers.
+    if (!msg.content?.trim() && !msg.tool_calls?.length) msg = await complete(messages, modelTools);
+
     const calls = (msg.tool_calls ?? []).filter((c) => c.type === "function");
-    if (!calls.length) return [...shown, cleanReply(msg.content ?? "")].filter(Boolean).join("\n\n") || "Done.";
+    if (!calls.length) {
+      const reply = [...shown, cleanReply(msg.content ?? "")].filter(Boolean).join("\n\n");
+      return reply || "Sorry, I lost track of that one. Could you send it again?";
+    }
 
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
     let approvalSummary: string | null = null;

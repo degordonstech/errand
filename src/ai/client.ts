@@ -13,4 +13,4 @@ export const meta = new OpenAI({
  * Muse Spark spends part of max_tokens on reasoning before it answers, so a small cap
  * returns an empty message. Keep this generous.
  */
-export const SPARK_MAX_TOKENS = 4000;
+export const SPARK_MAX_TOKENS = 8000;

@@ -251,6 +251,16 @@ describe("agent with the gate", () => {
     expect(sendRun).not.toHaveBeenCalled();
   });
 
+  it("retries once when the model returns an empty message, and never replies with nothing", async () => {
+    const { gate } = setup();
+    const replies = ["", "Here is your answer."];
+    const complete: Complete = async () => ({ role: "assistant", content: replies.shift() ?? "", refusal: null });
+    expect(await runAgent({ ctx, system: "", history: [], content: "x" }, { gate, tools: [fakeEmail], complete })).toBe("Here is your answer.");
+
+    const silent: Complete = async () => ({ role: "assistant", content: "", refusal: null });
+    expect(await runAgent({ ctx, system: "", history: [], content: "x" }, { gate, tools: [fakeEmail], complete: silent })).toMatch(/send it again/);
+  });
+
   it("allows only one waiting action per turn", async () => {
     const { gate, store } = setup();
     const args = (to: string) => ({ to, subject: "Hi", body: "hello" });
