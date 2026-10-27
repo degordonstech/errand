@@ -4,6 +4,9 @@ import { lookupNafdac, normaliseNafdacNo } from "../product/greenbook.js";
 import { decide, formatVerdict, type PackReading } from "../product/verdict.js";
 import { defineTool } from "./types.js";
 
+/** The model sometimes writes the word "null" for a field it could not read. */
+const blank = (s: string | null | undefined) => (s && !/^(null|none|n\/?a|unknown|not visible)$/i.test(s.trim()) ? s : null);
+
 export const checkProduct = defineTool({
   name: "check_product",
   description:
@@ -26,15 +29,15 @@ export const checkProduct = defineTool({
   }),
   async run(args, { user }) {
     const pack: PackReading = {
-      productName: args.product_name,
-      activeIngredient: args.active_ingredient,
-      strength: args.strength,
+      productName: blank(args.product_name),
+      activeIngredient: blank(args.active_ingredient),
+      strength: blank(args.strength),
       productType: args.product_type,
-      nafdacNo: args.nafdac_number ? normaliseNafdacNo(args.nafdac_number) : null,
+      nafdacNo: blank(args.nafdac_number) ? normaliseNafdacNo(args.nafdac_number!) : null,
       nafdacConfidence: args.nafdac_number_confidence,
-      batchNo: args.batch_number,
-      expiry: args.expiry_date,
-      manufacturer: args.manufacturer,
+      batchNo: blank(args.batch_number),
+      expiry: blank(args.expiry_date),
+      manufacturer: blank(args.manufacturer),
       packagingConcerns: args.packaging_concerns,
     };
 

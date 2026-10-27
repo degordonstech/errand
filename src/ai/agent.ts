@@ -13,6 +13,10 @@ type AssistantMessage = OpenAI.Chat.Completions.ChatCompletionMessage;
 
 export const MAX_STEPS = 6;
 
+// The model sometimes re-checks a pack or letter from earlier in the chat. One per message is enough.
+const ONCE_PER_TURN = new Set(["check_product", "explain_document"]);
+const ONCE_PER_TURN_ERROR = "Already done for this message. Earlier packs and letters were answered before, so do not check them again.";
+
 export type Complete = (messages: ChatMessage[], tools: OpenAI.Chat.Completions.ChatCompletionTool[]) => Promise<AssistantMessage>;
 
 const sparkComplete: Complete = async (messages, tools) => {
@@ -64,6 +68,7 @@ export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<stri
 
   // Text that tools require the user to see (a document explanation), in order.
   const shown: string[] = [];
+  const usedOnce = new Set<string>();
 
   for (let step = 1; step <= MAX_STEPS; step++) {
     let msg = await complete(messages, modelTools);
@@ -80,6 +85,11 @@ export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<stri
     let approvalSummary: string | null = null;
 
     for (const call of calls) {
+      if (ONCE_PER_TURN.has(call.function.name) && usedOnce.has(call.function.name)) {
+        messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: ONCE_PER_TURN_ERROR }) });
+        continue;
+      }
+      usedOnce.add(call.function.name);
       const result = await runCall(call.function.name, call.function.arguments, input.ctx, deps, find, approvalSummary !== null);
       if (result.approvalSummary) approvalSummary = result.approvalSummary;
       if (result.showUser) shown.push(result.showUser);

@@ -271,4 +271,20 @@ describe("agent with the gate", () => {
     expect(store.actions).toHaveLength(1);
     expect(sendRun).not.toHaveBeenCalled();
   });
+
+  it("checks one product per message, so an old pack from the chat is not checked again", async () => {
+    const { gate } = setup();
+    const checkRun = vi.fn(async (a: { name: string }) => ({ message: "ok", showUser: `Checked ${a.name}` }));
+    const check = defineTool({ name: "check_product", description: "check", sensitive: false, schema: z.object({ name: z.string() }), run: checkRun });
+    const steps = [
+      { role: "assistant" as const, content: null, refusal: null, tool_calls: [
+        { id: "c1", type: "function" as const, function: { name: "check_product", arguments: JSON.stringify({ name: "Ginny" }) } },
+        { id: "c2", type: "function" as const, function: { name: "check_product", arguments: JSON.stringify({ name: "Zentel" }) } },
+      ] },
+      { role: "assistant" as const, content: "Done.", refusal: null },
+    ];
+    const reply = await runAgent({ ctx, system: "", history: [], content: "x" }, { gate, tools: [check], complete: async () => steps.shift()! });
+    expect(checkRun).toHaveBeenCalledTimes(1);
+    expect(reply).toBe("Checked Ginny\n\nDone.");
+  });
 });
