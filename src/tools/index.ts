@@ -1,12 +1,14 @@
 import { z } from "zod";
 import type OpenAI from "openai";
+import { activityLog } from "./activity.js";
 import { explainDocument } from "./document.js";
 import { sendEmailTool } from "./email.js";
 import { createInvoice, listInvoices, markPaid, sendInvoice, sendPaymentReminder } from "./invoice.js";
 import { forget, remember } from "./memory.js";
+import { checkProduct } from "./product.js";
 import type { Tool } from "./types.js";
 
-export const tools: Tool<any>[] = [remember, forget, explainDocument, sendEmailTool, createInvoice, sendInvoice, sendPaymentReminder, listInvoices, markPaid];
+export const tools: Tool<any>[] = [remember, forget, explainDocument, sendEmailTool, createInvoice, sendInvoice, sendPaymentReminder, listInvoices, markPaid, checkProduct, activityLog];
 
 const byName = new Map(tools.map((t) => [t.name, t]));
 
