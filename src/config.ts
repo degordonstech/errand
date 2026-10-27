@@ -16,9 +16,9 @@ const schema = z.object({
   LOG_LEVEL: z.string().default("info"),
 
   META_API_KEY: z.string().min(1),
-  META_API_BASE_URL: z.string().url(),
-  MUSE_SPARK_MODEL: z.string().min(1),
-  MUSE_TRANSCRIBE_MODEL: z.string().min(1),
+  META_API_BASE_URL: z.string().url().default("https://api.meta.ai/v1"),
+  MUSE_SPARK_MODEL: z.string().min(1).default("muse-spark-1.3"),
+  MUSE_TRANSCRIBE_MODEL: z.string().min(1).default("muse-voice-transcribe-1.0"),
 
   WHATSAPP_TOKEN: z.string().min(1),
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
@@ -31,7 +31,7 @@ const schema = z.object({
   SUPABASE_SERVICE_KEY: z.string().min(1),
 
   RESEND_API_KEY: z.string().default(""),
-  EMAIL_FROM: z.string().default(""),
+  EMAIL_FROM: z.string().default("Errand <onboarding@resend.dev>"),
   DEV_EMAIL_TO: z.string().default(""),
 
   CRON_SECRET: z.string().min(32),
