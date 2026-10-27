@@ -18,3 +18,20 @@ export const meta = new OpenAI({
  * returns an empty message. Keep this generous.
  */
 export const SPARK_MAX_TOKENS = 8000;
+
+const isModelNotFound = (err: unknown) => (err as { status?: number; code?: string })?.status === 404 && (err as { code?: string })?.code === "model_not_found";
+
+/**
+ * Through the relay, an occasional request is served from a location where the Meta Model API
+ * reports no models. Nothing has run when that happens, so it is safe to try again.
+ */
+export async function retryModelNotFound<T>(fn: () => Promise<T>, attempts = 4, delayMs = 400): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= attempts || !isModelNotFound(err)) throw err;
+      await new Promise((r) => setTimeout(r, delayMs * i));
+    }
+  }
+}

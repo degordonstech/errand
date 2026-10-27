@@ -5,7 +5,7 @@ import type { SafetyGate } from "../safety/gate.js";
 import { cleanReply } from "../text.js";
 import { getTool, toModelTools, tools as allTools } from "../tools/index.js";
 import type { Tool, ToolContext } from "../tools/types.js";
-import { meta, SPARK_MAX_TOKENS } from "./client.js";
+import { meta, retryModelNotFound, SPARK_MAX_TOKENS } from "./client.js";
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
@@ -16,12 +16,14 @@ export const MAX_STEPS = 6;
 export type Complete = (messages: ChatMessage[], tools: OpenAI.Chat.Completions.ChatCompletionTool[]) => Promise<AssistantMessage>;
 
 const sparkComplete: Complete = async (messages, tools) => {
-  const res = await meta.chat.completions.create({
-    model: config.MUSE_SPARK_MODEL,
-    max_tokens: SPARK_MAX_TOKENS,
-    messages,
-    tools,
-  });
+  const res = await retryModelNotFound(() =>
+    meta.chat.completions.create({
+      model: config.MUSE_SPARK_MODEL,
+      max_tokens: SPARK_MAX_TOKENS,
+      messages,
+      tools,
+    }),
+  );
   const choice = res.choices[0];
   if (!choice.message.content && !choice.message.tool_calls?.length) {
     logger.warn({ finish: choice.finish_reason, usage: res.usage }, "model returned an empty message");

@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import { config } from "../config.js";
 import { sharpestFrames } from "../media/ffmpeg.js";
-import { meta, SPARK_MAX_TOKENS } from "./client.js";
+import { meta, retryModelNotFound, SPARK_MAX_TOKENS } from "./client.js";
 
 type Part = OpenAI.Chat.Completions.ChatCompletionContentPart;
 
@@ -21,10 +21,12 @@ export async function videoParts(data: Buffer): Promise<Part[]> {
 
 /** One-shot question about media. */
 export async function askAboutMedia(prompt: string, parts: Part[]): Promise<string> {
-  const res = await meta.chat.completions.create({
-    model: config.MUSE_SPARK_MODEL,
-    max_tokens: SPARK_MAX_TOKENS,
-    messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...parts] }],
-  });
+  const res = await retryModelNotFound(() =>
+    meta.chat.completions.create({
+      model: config.MUSE_SPARK_MODEL,
+      max_tokens: SPARK_MAX_TOKENS,
+      messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...parts] }],
+    }),
+  );
   return res.choices[0]?.message?.content?.trim() ?? "";
 }

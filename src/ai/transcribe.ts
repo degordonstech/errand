@@ -1,7 +1,7 @@
 import { fetchRetry } from "../net.js";
 import { config } from "../config.js";
 import { toTranscriptionWav } from "../media/ffmpeg.js";
-import { metaHeaders } from "./client.js";
+import { metaHeaders, retryModelNotFound } from "./client.js";
 
 const LANGUAGES = ["English", "Nigerian Pidgin"];
 
@@ -24,13 +24,16 @@ export async function transcribe(audio: Buffer, keywords: string[] = []): Promis
   form.append("request", new Blob([JSON.stringify(settings)], { type: "application/json" }));
   form.append("audio", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "voice.wav");
 
-  const res = await fetchRetry(`${config.META_API_BASE_URL}/asr/transcribe`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${config.META_API_KEY}`, Accept: "application/json", ...metaHeaders() },
-    body: form,
-    signal: AbortSignal.timeout(60_000),
+  const body = await retryModelNotFound(async () => {
+    const res = await fetchRetry(`${config.META_API_BASE_URL}/asr/transcribe`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.META_API_KEY}`, Accept: "application/json", ...metaHeaders() },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (res.status === 404) throw Object.assign(new Error("transcribe failed: model not found"), { status: 404, code: "model_not_found" });
+    if (!res.ok) throw new Error(`transcribe failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+    return (await res.json()) as { transcript?: string };
   });
-  if (!res.ok) throw new Error(`transcribe failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
-  const body = (await res.json()) as { transcript?: string };
   return (body.transcript ?? "").trim();
 }
