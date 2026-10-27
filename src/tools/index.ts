@@ -6,9 +6,26 @@ import { sendEmailTool } from "./email.js";
 import { createInvoice, listInvoices, markPaid, sendInvoice, sendPaymentReminder } from "./invoice.js";
 import { forget, remember } from "./memory.js";
 import { checkProduct } from "./product.js";
+import { cancelReminder, listReminders, setReminder, updateReminder } from "./reminders.js";
 import type { Tool } from "./types.js";
 
-export const tools: Tool<any>[] = [remember, forget, explainDocument, sendEmailTool, createInvoice, sendInvoice, sendPaymentReminder, listInvoices, markPaid, checkProduct, activityLog];
+export const tools: Tool<any>[] = [
+  remember,
+  forget,
+  setReminder,
+  listReminders,
+  updateReminder,
+  cancelReminder,
+  explainDocument,
+  sendEmailTool,
+  createInvoice,
+  sendInvoice,
+  sendPaymentReminder,
+  listInvoices,
+  markPaid,
+  checkProduct,
+  activityLog,
+];
 
 const byName = new Map(tools.map((t) => [t.name, t]));
 

@@ -66,10 +66,35 @@ export async function sendDocument(chatId: string, data: Buffer, filename: strin
   return String(res.message_id);
 }
 
-/** Stops the spinner on a tapped button and removes the buttons, so they cannot be tapped again. */
-export async function settleButtons(chatId: string, callback: { id: string; messageId: number }): Promise<void> {
+export type ReminderTap = "done" | "1h" | "tmr";
+
+export function parseReminderButton(data: string | undefined): { tap: ReminderTap; reminderId: string } | null {
+  const m = data?.match(/^rem:(done|1h|tmr):(.+)$/);
+  return m ? { tap: m[1] as ReminderTap, reminderId: m[2] } : null;
+}
+
+/** A due reminder with Done and snooze buttons. A repeating one cannot move to tomorrow, its next slot is already set. */
+export function sendReminder(chatId: string, text: string, reminderId: string, repeating: boolean): Promise<string | undefined> {
+  const row = [
+    { text: "Done", callback_data: `rem:done:${reminderId}` },
+    { text: "In 1 hour", callback_data: `rem:1h:${reminderId}` },
+    ...(repeating ? [] : [{ text: "Tomorrow", callback_data: `rem:tmr:${reminderId}` }]),
+  ];
+  return sendMessage(chatId, text, { reply_markup: { inline_keyboard: [row] } });
+}
+
+/** Stops the spinner on a tapped button and leaves the buttons in place. */
+export function answerTap(callbackId: string, toast?: string): Promise<unknown> {
+  return call("answerCallbackQuery", { callback_query_id: callbackId, ...(toast ? { text: toast } : {}) }).catch(() => undefined);
+}
+
+/**
+ * Stops the spinner on a tapped button and removes the buttons, so they cannot be tapped again.
+ * A toast is a short note Telegram shows on screen without adding a message to the chat.
+ */
+export async function settleButtons(chatId: string, callback: { id: string; messageId: number }, toast?: string): Promise<void> {
   await Promise.allSettled([
-    call("answerCallbackQuery", { callback_query_id: callback.id }),
+    answerTap(callback.id, toast),
     call("editMessageReplyMarkup", { chat_id: chatId, message_id: callback.messageId, reply_markup: { inline_keyboard: [] } }),
   ]);
 }

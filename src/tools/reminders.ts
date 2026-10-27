@@ -1,0 +1,173 @@
+import { z } from "zod";
+import { db } from "../db/supabase.js";
+import { describeRepeat, describeWhen, firstOccurrence, fromLagos, type Repeat } from "../time.js";
+import { defineTool } from "./types.js";
+
+/** Enough for timetables and bills, small enough that a runaway model cannot flood the table. */
+const MAX_ACTIVE_PER_USER = 200;
+
+export interface ReminderRow {
+  id: string;
+  user_id: string;
+  text: string;
+  due_at: string;
+  repeat: Repeat | null;
+  source: string;
+  status: "active" | "sent" | "done" | "cancelled";
+}
+
+const whenSchema = z.string().describe('Lagos local time, "YYYY-MM-DDTHH:MM", for example 2026-10-30T09:00.');
+
+const repeatSchema = z
+  .object({
+    every: z.enum(["day", "week", "month"]),
+    interval: z.number().int().min(1).max(12).optional().describe("Every n days, weeks or months. Defaults to 1."),
+    weekdays: z.array(z.number().int().min(1).max(7)).max(7).optional().describe("For weekly repeats: 1 = Monday ... 7 = Sunday."),
+    until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Last date it may fire, YYYY-MM-DD."),
+  })
+  .describe("Leave out for a one-off reminder.");
+
+function parseWhen(when: string): Date {
+  const date = fromLagos(when);
+  if (!date) throw new Error(`Could not read the time "${when}". Use YYYY-MM-DDTHH:MM in Lagos time.`);
+  return date;
+}
+
+async function getReminder(userId: string, id: string): Promise<ReminderRow> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("That is not a reminder id. Use list_reminders to find it.");
+  const { data, error } = await db.from("reminders").select().eq("user_id", userId).eq("id", id).maybeSingle();
+  if (error) throw new Error(`getReminder: ${error.message}`);
+  if (!data) throw new Error("There is no such reminder. Use list_reminders to find it.");
+  return data as ReminderRow;
+}
+
+export function describeReminder(r: Pick<ReminderRow, "text" | "due_at" | "repeat">, now = new Date()): string {
+  const repeat = describeRepeat(r.repeat);
+  return `${r.text}: ${describeWhen(new Date(r.due_at), now)}${repeat ? ` (${repeat})` : ""}`;
+}
+
+export const setReminder = defineTool({
+  name: "set_reminder",
+  description:
+    "Set a reminder for the user, once or repeating. Work out the exact Lagos date and time from today's date. " +
+    "Also use it, with picked_up_from_conversation, when the user mentions a plan with a date in passing.",
+  sensitive: false,
+  schema: z.object({
+    text: z.string().min(1).max(300).describe("What to remind them about, in their words, short."),
+    when: whenSchema.describe("First time it should fire, Lagos local time, YYYY-MM-DDTHH:MM."),
+    repeat: repeatSchema.optional(),
+    picked_up_from_conversation: z.boolean().optional().describe("True when the user did not ask for a reminder but mentioned a plan."),
+  }),
+  async run(args, { user }) {
+    const now = new Date();
+    const due = firstOccurrence(parseWhen(args.when), args.repeat ?? null, now);
+    if (!due) throw new Error("That time has already passed. Ask the user when they want it.");
+
+    const { count } = await db.from("reminders").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "active");
+    if ((count ?? 0) >= MAX_ACTIVE_PER_USER) throw new Error(`The user already has ${MAX_ACTIVE_PER_USER} active reminders. Ask them to cancel some first.`);
+
+    const { data, error } = await db
+      .from("reminders")
+      .insert({
+        user_id: user.id,
+        text: args.text.trim(),
+        due_at: due.toISOString(),
+        repeat: args.repeat ?? null,
+        source: args.picked_up_from_conversation ? "casual" : "user",
+      })
+      .select()
+      .single();
+    if (error) throw new Error(`set_reminder: ${error.message}`);
+    const row = data as ReminderRow;
+    return {
+      message: `Reminder set: ${describeReminder(row, now)}.${args.picked_up_from_conversation ? " Tell the user in one line, and that they can say cancel." : ""}`,
+      data: { reminder_id: row.id },
+    };
+  },
+});
+
+export const listReminders = defineTool({
+  name: "list_reminders",
+  description: "List the user's upcoming reminders with their ids. Use for 'what are my reminders' or to find one to change or cancel.",
+  sensitive: false,
+  schema: z.object({}),
+  async run(_args, { user }) {
+    const { data, error } = await db
+      .from("reminders")
+      .select("id, text, due_at, repeat")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .order("due_at")
+      .limit(30);
+    if (error) throw new Error(`list_reminders: ${error.message}`);
+    if (!data?.length) return { message: "The user has no upcoming reminders." };
+    const now = new Date();
+    return { message: data.map((r) => `- ${describeReminder(r as ReminderRow, now)} [id ${r.id}]`).join("\n") };
+  },
+});
+
+export const updateReminder = defineTool({
+  name: "update_reminder",
+  description:
+    "Change a reminder's time, text or repeat. Use it when the user replies 'later', 'tomorrow' or 'in 2 hours' to a reminder: " +
+    "the reminder id is in that reminder message.",
+  sensitive: false,
+  schema: z.object({
+    reminder_id: z.string(),
+    when: whenSchema.optional(),
+    text: z.string().min(1).max(300).optional(),
+    repeat: repeatSchema.nullable().optional().describe("null turns a repeating reminder into a one-off."),
+  }),
+  async run(args, { user }) {
+    const r = await getReminder(user.id, args.reminder_id);
+    const now = new Date();
+    const repeat = args.repeat === undefined ? r.repeat : args.repeat;
+    const due = args.when ? firstOccurrence(parseWhen(args.when), repeat, now) : new Date(r.due_at);
+    if (!due) throw new Error("That time has already passed. Ask the user when they want it.");
+
+    const update = { text: args.text?.trim() ?? r.text, repeat, due_at: due.toISOString(), status: "active" };
+    const { error } = await db.from("reminders").update(update).eq("id", r.id).eq("user_id", user.id);
+    if (error) throw new Error(`update_reminder: ${error.message}`);
+    return { message: `Reminder updated: ${describeReminder(update, now)}.` };
+  },
+});
+
+export const cancelReminder = defineTool({
+  name: "cancel_reminder",
+  description: "Cancel a reminder the user no longer wants. Find the id with list_reminders if needed.",
+  sensitive: false,
+  schema: z.object({ reminder_id: z.string() }),
+  async run({ reminder_id }, { user }) {
+    const r = await getReminder(user.id, reminder_id);
+    const { error } = await db.from("reminders").update({ status: "cancelled" }).eq("id", r.id).eq("user_id", user.id);
+    if (error) throw new Error(`cancel_reminder: ${error.message}`);
+    return { message: `Cancelled the reminder "${r.text}".` };
+  },
+});
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Applies a tap on a sent reminder's buttons and returns the short note to show.
+ * Snoozing a repeating reminder adds a one-off copy, so its regular slot stays as it was.
+ */
+export async function applyReminderTap(userId: string, tap: "done" | "1h" | "tmr", reminderId: string, now = new Date()): Promise<string> {
+  const r = await getReminder(userId, reminderId).catch(() => null);
+  if (!r || r.status === "cancelled") return "That reminder is no longer active.";
+
+  if (tap === "done") {
+    if (!r.repeat) await db.from("reminders").update({ status: "done" }).eq("id", r.id).eq("user_id", userId);
+    return "Nice one. Marked done.";
+  }
+
+  const due =
+    tap === "1h" ? new Date(now.getTime() + HOUR_MS) : new Date(Math.max(new Date(r.due_at).getTime() + 24 * HOUR_MS, now.getTime() + HOUR_MS));
+  if (r.repeat) {
+    const { error } = await db.from("reminders").insert({ user_id: userId, text: r.text, due_at: due.toISOString(), source: "snooze" });
+    if (error) throw new Error(`applyReminderTap: ${error.message}`);
+  } else {
+    const { error } = await db.from("reminders").update({ due_at: due.toISOString(), status: "active" }).eq("id", r.id).eq("user_id", userId);
+    if (error) throw new Error(`applyReminderTap: ${error.message}`);
+  }
+  return `I'll remind you again ${describeWhen(due, now)}.`;
+}

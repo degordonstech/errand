@@ -10,6 +10,13 @@ create table if not exists public.users (
   chat_id       text not null unique,
   name          text,
   business_name text,
+  -- Set during onboarding.
+  preferred_name  text,
+  types           text[] not null default '{}',
+  features        text[] not null default '{}',
+  brief_time      text,
+  onboarding_step text,
+  onboarded_at    timestamptz,
   created_at    timestamptz not null default now()
 );
 
@@ -98,12 +105,28 @@ create table if not exists public.processed_messages (
   created_at    timestamptz not null default now()
 );
 
+create table if not exists public.reminders (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references public.users(id) on delete cascade,
+  text         text not null,
+  due_at       timestamptz not null,
+  -- null for a one-off. Otherwise {"every": "day" | "week" | "month", "interval": n, "weekdays": [1..7], "until": "YYYY-MM-DD"}.
+  repeat       jsonb,
+  -- Where it came from: user, casual (picked up from conversation), snooze.
+  source       text not null default 'user',
+  status       text not null default 'active' check (status in ('active', 'sent', 'done', 'cancelled')),
+  last_sent_at timestamptz,
+  created_at   timestamptz not null default now()
+);
+create index if not exists reminders_due_idx on public.reminders (status, due_at);
+create index if not exists reminders_user_idx on public.reminders (user_id, status);
+
 -- Lock down: RLS on, no policies. service_role bypasses RLS.
 do $$
 declare t text;
 begin
   foreach t in array array['users', 'memory', 'messages', 'pending_actions', 'action_log',
-                           'invoices', 'product_checks', 'nafdac_cache', 'processed_messages']
+                           'invoices', 'product_checks', 'nafdac_cache', 'processed_messages', 'reminders']
   loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on table public.%I from anon, authenticated', t);

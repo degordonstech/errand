@@ -12,7 +12,18 @@ import { gate } from "./safety/instance.js";
 import { logAction } from "./tools/log.js";
 import { loadMemory } from "./tools/memory.js";
 import { downloadFile } from "./telegram/api.js";
-import { APPROVAL_PROMPT, keepTyping, parseApprovalButton, sendApproval, sendText, settleButtons } from "./telegram/send.js";
+import { handleOnboardingTap, handleOnboardingText, isMenuRequest, startOnboarding } from "./onboarding.js";
+import {
+  answerTap,
+  APPROVAL_PROMPT,
+  keepTyping,
+  parseApprovalButton,
+  parseReminderButton,
+  sendApproval,
+  sendText,
+  settleButtons,
+} from "./telegram/send.js";
+import { applyReminderTap } from "./tools/reminders.js";
 import type { InboundMedia, InboundMessage } from "./telegram/types.js";
 
 type ContentPart = OpenAI.Chat.Completions.ChatCompletionContentPart;
@@ -88,7 +99,6 @@ async function reply(user: User, msg: InboundMessage, inbound: Inbound, memory: 
       ? "I could not make out that voice note. Could you try again?"
       : "I can read photos and PDFs. That file type is not one I can open yet.";
   }
-  if (/^\/start\b/.test(inbound.text)) return WELCOME;
 
   // A bare YES or NO answers the user's own waiting action, typed or spoken.
   if (!inbound.parts.length) {
@@ -141,10 +151,37 @@ async function sendAnswer(user: User, answer: string): Promise<string | undefine
   return sendText(user.chat_id, answer);
 }
 
-/** A tapped Yes or No button. Taps never count towards the daily limit. */
+const REMINDER_TAP_LABEL = { done: "Done", "1h": "In 1 hour", tmr: "Tomorrow" } as const;
+
+/** A tapped button: approval, reminder or onboarding. Taps never count towards the daily limit. */
 async function handleTap(user: User, msg: InboundMessage): Promise<void> {
-  await settleButtons(msg.from, msg.callback!);
-  const tapped = parseApprovalButton(msg.buttonId);
+  const data = msg.buttonId ?? "";
+  const callback = msg.callback!;
+
+  if (data.startsWith("ob:")) {
+    const toast = await handleOnboardingTap(user, data, callback.messageId).catch((err) => {
+      logger.error({ err, from: maskId(msg.from) }, "onboarding tap failed");
+      return "Something went wrong. Please try again.";
+    });
+    // Type buttons stay so more can be tapped; every other onboarding button is used once.
+    if (data.startsWith("ob:type:") || toast === "Tap at least one first.") await answerTap(callback.id, toast || undefined);
+    else await settleButtons(msg.from, callback, toast || undefined);
+    return;
+  }
+
+  const reminder = parseReminderButton(data);
+  if (reminder) {
+    const toast = await applyReminderTap(user.id, reminder.tap, reminder.reminderId).catch((err) => {
+      logger.error({ err, from: maskId(msg.from) }, "reminder tap failed");
+      return "Something went wrong. Please try again.";
+    });
+    await settleButtons(msg.from, callback, toast);
+    await saveMessage(user.id, "in", "text", `[tapped ${REMINDER_TAP_LABEL[reminder.tap]} on a reminder: ${toast}]`, msg.id);
+    return;
+  }
+
+  await settleButtons(msg.from, callback);
+  const tapped = parseApprovalButton(data);
   if (!tapped) return;
   await saveMessage(user.id, "in", "text", tapped.decision, msg.id);
   let answer: string;
@@ -175,6 +212,7 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
   const user = await getOrCreateUser(msg.from, msg.profileName);
   if (msg.callback) return handleTap(user, msg);
   if (await overDailyLimit(user, msg)) return;
+  if (msg.kind === "text" && (await handleSetupText(user, msg))) return;
 
   const stopTyping = keepTyping(msg.from);
   let answer: string;
@@ -215,4 +253,41 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
   const outId = await sendAnswer(user, answer);
   await saveMessage(user.id, "out", "text", answer, outId);
   logger.info({ from: maskId(msg.from), kind: msg.kind, rawType: msg.rawType, ms: Date.now() - started }, "message handled");
+
+  // Someone who skipped /start and went straight to a task is invited to set up afterwards, once.
+  if (!user.onboarded_at && !user.onboarding_step) await startOnboarding(user).catch((err) => logger.error({ err }, "onboarding invite failed"));
+}
+
+/** /start, "menu" and answers to onboarding questions. Returns true when the message was handled here. */
+async function handleSetupText(user: User, msg: InboundMessage): Promise<boolean> {
+  const text = msg.text?.trim() ?? "";
+  const isStart = /^\/start\b/.test(text);
+  const isMenu = isMenuRequest(text);
+  if (!isStart && !isMenu && user.onboarding_step !== "name") return false;
+
+  try {
+    if (isStart) {
+      await saveMessage(user.id, "in", "text", text, msg.id);
+      const outId = await sendText(user.chat_id, WELCOME);
+      await saveMessage(user.id, "out", "text", WELCOME, outId);
+      if (!user.onboarded_at) await startOnboarding(user);
+      return true;
+    }
+    if (isMenu) {
+      await saveMessage(user.id, "in", "text", text, msg.id);
+      await startOnboarding(user, true);
+      return true;
+    }
+    if (await handleOnboardingText(user, text)) {
+      await saveMessage(user.id, "in", "text", text, msg.id);
+      return true;
+    }
+  } catch (err) {
+    logger.error({ err, from: maskId(msg.from) }, "onboarding failed");
+    await sendText(user.chat_id, 'Something went wrong on my side. Say "menu" to try the setup again.');
+    return true;
+  }
+  // Not an onboarding answer after all: it goes on to the agent as a normal message.
+  user.onboarding_step = "later";
+  return false;
 }

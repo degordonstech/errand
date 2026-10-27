@@ -11,9 +11,20 @@ export const db = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY,
 export interface User {
   id: string;
   chat_id: string;
+  /** The Telegram name. */
   name: string | null;
   business_name: string | null;
+  /** What the user asked to be called during onboarding. */
+  preferred_name: string | null;
+  types: string[];
+  features: string[];
+  /** "07:00" when the user chose a morning brief. */
+  brief_time: string | null;
+  onboarding_step: string | null;
+  onboarded_at: string | null;
 }
+
+const USER_COLUMNS = "id, chat_id, name, business_name, preferred_name, types, features, brief_time, onboarding_step, onboarded_at";
 
 /** Inserts the message id; returns false if it was already there (a Telegram retry). */
 export async function claimMessage(messageRef: string): Promise<boolean> {
@@ -27,7 +38,7 @@ export async function getOrCreateUser(chatId: string, name?: string): Promise<Us
   const { data, error } = await db
     .from("users")
     .upsert({ chat_id: chatId }, { onConflict: "chat_id", ignoreDuplicates: false })
-    .select("id, chat_id, name, business_name")
+    .select(USER_COLUMNS)
     .single();
   if (error) throw new Error(`getOrCreateUser: ${error.message}`);
   // Telegram names change; keep the latest.
@@ -52,7 +63,7 @@ export async function saveMessage(
 }
 
 export async function getUserById(id: string): Promise<User> {
-  const { data, error } = await db.from("users").select("id, chat_id, name, business_name").eq("id", id).single();
+  const { data, error } = await db.from("users").select(USER_COLUMNS).eq("id", id).single();
   if (error) throw new Error(`getUserById: ${error.message}`);
   return data as User;
 }
@@ -84,4 +95,9 @@ export async function countInboundSince(userId: string, since: Date): Promise<nu
     .gte("created_at", since.toISOString());
   if (error) throw new Error(`countInboundSince: ${error.message}`);
   return count ?? 0;
+}
+
+export async function updateUser(id: string, fields: Partial<Omit<User, "id" | "chat_id">>): Promise<void> {
+  const { error } = await db.from("users").update(fields).eq("id", id);
+  if (error) throw new Error(`updateUser: ${error.message}`);
 }
