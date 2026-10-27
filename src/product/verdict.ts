@@ -100,8 +100,6 @@ export function decide(pack: PackReading, lookup: { ok: true; entries: RegisterE
   const flags: string[] = [];
   const expiry = parseExpiry(pack.expiry);
   if (expiry && expiry.getTime() < now.getTime()) flags.push(`Expired: the pack says EXP ${pack.expiry}.`);
-  if (pack.nafdacNo && !pack.batchNo) flags.push("No batch number found on the pack.");
-  if (pack.nafdacNo && !pack.expiry) flags.push("No expiry date found on the pack.");
   for (const c of pack.packagingConcerns ?? []) flags.push(`Packaging: ${c}`);
 
   const finish = (code: VerdictCode, text: string): Verdict => ({ code, text, flags });
@@ -115,6 +113,10 @@ export function decide(pack: PackReading, lookup: { ok: true; entries: RegisterE
   if (pack.nafdacConfidence === "low") {
     return finish("unreadable", `*I could not read the NAFDAC number clearly* (it looked like ${pack.nafdacNo}). Please send a sharp, close photo of that side in good light.`);
   }
+  // Missing details only matter once the pack can actually be checked.
+  if (!pack.batchNo) flags.push("No batch number found on the pack.");
+  if (!pack.expiry) flags.push("No expiry date found on the pack.");
+
   if (!lookup.ok) return finish("lookup_failed", "*I could not reach the NAFDAC Greenbook just now.* Please send the check again in a few minutes.");
 
   const no = pack.nafdacNo;

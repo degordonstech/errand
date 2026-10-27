@@ -93,8 +93,14 @@ describe("decide", () => {
     expect(v.text).toMatch(/clearer|sharp/);
   });
 
-  it("flags a missing NAFDAC number", () => {
-    expect(decide(pack({ nafdacNo: null, nafdacConfidence: "not_visible" }), found(), NOW).code).toBe("no_number");
+  it("flags a missing NAFDAC number without extra noise", () => {
+    const v = decide(pack({ nafdacNo: null, nafdacConfidence: "not_visible", batchNo: null, expiry: null }), found(), NOW);
+    expect(v.code).toBe("no_number");
+    expect(v.flags).toEqual([]);
+  });
+
+  it("notes a missing batch number on a checked pack", () => {
+    expect(decide(pack({ batchNo: null }), found(zentel), NOW).flags).toContain("No batch number found on the pack.");
   });
 
   it("does not call food fake just because the Greenbook does not list food", () => {

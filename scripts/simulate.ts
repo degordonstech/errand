@@ -18,7 +18,7 @@ const file = flag("file");
 const text = args.join(" ") || (file ? "" : "hello");
 
 async function upload(path: string) {
-  const mime = ({ ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png" } as Record<string, string>)[extname(path).toLowerCase()];
+  const mime = ({ ".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4", ".ogg": "audio/ogg" } as Record<string, string>)[extname(path).toLowerCase()];
   if (!mime) throw new Error("unsupported file type");
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
@@ -39,7 +39,11 @@ const message = !media
   ? { type: "text", text: { body: text } }
   : media.mime.startsWith("image/")
     ? { type: "image", image: { id: media.id, mime_type: media.mime, caption: text || undefined } }
-    : { type: "document", document: { id: media.id, mime_type: media.mime, filename: basename(file!), caption: text || undefined } };
+    : media.mime === "video/mp4"
+      ? { type: "video", video: { id: media.id, mime_type: media.mime, caption: text || undefined } }
+      : media.mime === "audio/ogg"
+        ? { type: "audio", audio: { id: media.id, mime_type: media.mime, voice: true } }
+        : { type: "document", document: { id: media.id, mime_type: media.mime, filename: basename(file!), caption: text || undefined } };
 
 const payload = {
   object: "whatsapp_business_account",
