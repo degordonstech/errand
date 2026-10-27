@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { config } from "../config.js";
+import { fetchRetry } from "../net.js";
 
 /** Extra headers for every Meta call. The relay key is only sent when a relay is configured. */
 export const metaHeaders = (): Record<string, string> => (config.META_RELAY_KEY ? { "x-relay-key": config.META_RELAY_KEY } : {});
@@ -11,6 +12,8 @@ export const meta = new OpenAI({
   timeout: 90_000,
   maxRetries: 3,
   defaultHeaders: metaHeaders(),
+  // DNS blips are retried quickly here, before the SDK's own slower retries.
+  fetch: (url, init) => fetchRetry(url as string | URL, init),
 });
 
 /**
