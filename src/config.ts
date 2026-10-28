@@ -26,6 +26,8 @@ const schema = z.object({
   DEV_EMAIL_TO: z.string().default(""),
 
   CRON_SECRET: z.string().min(32),
+  /** The owner's Telegram chat id. Only this chat can use the /demo commands used to record the demo video. */
+  OWNER_CHAT_ID: z.string().default(""),
   /** Messages a user can send per Lagos day, to keep model costs in check. */
   DAILY_MESSAGE_LIMIT: z.coerce.number().int().positive().default(60),
 });

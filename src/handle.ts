@@ -12,6 +12,7 @@ import { gate } from "./safety/instance.js";
 import { logAction } from "./tools/log.js";
 import { loadMemory } from "./tools/memory.js";
 import { downloadFile } from "./telegram/api.js";
+import { isDemoCommand, isOwner, runDemo } from "./demo.js";
 import { handleOnboardingTap, handleOnboardingText, isMenuRequest, startOnboarding } from "./onboarding.js";
 import {
   answerTap,
@@ -274,6 +275,14 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
   const user = await getOrCreateUser(msg.from, msg.profileName);
   if (msg.callback) return handleTap(user, msg);
   if (await overDailyLimit(user, msg)) return;
+  if (msg.kind === "text" && isDemoCommand(msg.text ?? "") && isOwner(msg.from)) {
+    const note = await runDemo(user, msg.text!).catch((err) => {
+      logger.error({ err }, "demo command failed");
+      return "That demo command failed. Check the logs.";
+    });
+    if (note) await sendText(user.chat_id, note);
+    return;
+  }
   if (msg.kind === "text" && (await handleSetupText(user, msg))) return;
 
   const stopTyping = keepTyping(msg.from);
