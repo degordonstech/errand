@@ -4,7 +4,7 @@ import { systemPrompt } from "./ai/prompts.js";
 import { transcribe } from "./ai/transcribe.js";
 import { imagePart, pdfPart, videoParts } from "./ai/vision.js";
 import { config } from "./config.js";
-import { countInboundSince, getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
+import { countInboundSince, db, getOrCreateUser, recentMessages, saveMessage, type User } from "./db/supabase.js";
 import { logger, maskId } from "./log.js";
 import { waitingForUser } from "./jobs/queue.js";
 import { classifyReply, STALE_BUTTON, startOfLagosDay } from "./safety/gate.js";
@@ -63,7 +63,25 @@ async function download(media: InboundMedia): Promise<Buffer> {
   return downloadFile(media.id);
 }
 
-async function readInbound(msg: InboundMessage, memory: Record<string, string>): Promise<Inbound> {
+/**
+ * Words the transcriber should expect from this user: course codes from their timetable, the people
+ * they saved and short saved facts. ID numbers are left out: hinted digits bleed into other numbers.
+ */
+export function voiceHints(memory: Record<string, string>, reminderTexts: string[], people: string[]): string[] {
+  const codes = reminderTexts.flatMap((t) => t.match(/\b[A-Z]{3}\s?\d{3}\b/g) ?? []);
+  const facts = Object.values(memory).filter((v) => v.length <= 25 && (v.match(/\d/g) ?? []).length <= 3);
+  return [...new Set([...codes, ...people, ...facts])].slice(0, 40);
+}
+
+async function loadVoiceHints(userId: string, memory: Record<string, string>): Promise<string[]> {
+  const [reminders, people] = await Promise.all([
+    db.from("reminders").select("text").eq("user_id", userId).eq("status", "active").in("source", ["timetable", "exams"]).limit(100),
+    db.from("people").select("name").eq("user_id", userId).limit(50),
+  ]);
+  return voiceHints(memory, (reminders.data ?? []).map((r) => r.text), (people.data ?? []).map((p) => p.name));
+}
+
+async function readInbound(msg: InboundMessage, memory: Record<string, string>, userId: string): Promise<Inbound> {
   const caption = msg.text?.trim() ?? "";
   const media = msg.media;
   switch (msg.kind) {
@@ -71,8 +89,7 @@ async function readInbound(msg: InboundMessage, memory: Record<string, string>):
       return { text: caption, parts: [], label: caption };
     case "voice": {
       const audio = await download(media!);
-      const keywords = Object.values(memory).filter((v) => v.length <= 40);
-      const transcript = await transcribe(audio, keywords);
+      const transcript = await transcribe(audio, await loadVoiceHints(userId, memory).catch(() => []));
       return { text: transcript, parts: [], label: transcript ? `[voice note] ${transcript}` : "[voice note]" };
     }
     case "image": {
@@ -148,6 +165,19 @@ async function reply(
 const HELD_MEDIA_MS = 10 * 60 * 1000;
 const FOLLOW_UP_WAIT_MS = 6000;
 const heldMedia = new Map<string, { parts: ContentPart[]; files: TurnFile[]; at: number }>();
+
+/** The last files each user sent, so a follow-up such as "make it blue" still has the photo. */
+const RECENT_FILES_MS = 30 * 60 * 1000;
+const recentFiles = new Map<string, { files: TurnFile[]; at: number }>();
+
+function filesForTurn(userKey: string, files: TurnFile[]): TurnFile[] {
+  if (files.length) {
+    recentFiles.set(userKey, { files, at: Date.now() });
+    return files;
+  }
+  const recent = recentFiles.get(userKey);
+  return recent && Date.now() - recent.at < RECENT_FILES_MS ? recent.files : [];
+}
 
 async function followUpIsQueued(userKey: string): Promise<boolean> {
   for (let waited = 0; waited < FOLLOW_UP_WAIT_MS; waited += 500) {
@@ -234,7 +264,7 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
   try {
     const memory = await loadMemory(user.id);
     if (msg.kind === "video") await sendText(msg.from, "On it, looking at your video...");
-    const inbound = await readInbound(msg, memory);
+    const inbound = await readInbound(msg, memory, user.id);
     await saveMessage(user.id, "in", msg.kind, inbound.label, msg.id);
 
     const held = heldMedia.get(msg.from);
@@ -256,7 +286,7 @@ export async function handleMessage(msg: InboundMessage): Promise<void> {
     const isAnswer = Boolean(classifyReply(inbound.text));
     if (!isAnswer) inbound.parts = [...earlier, ...inbound.parts];
 
-    answer = await reply(user, msg, inbound, memory, isAnswer ? earlier : [], files);
+    answer = await reply(user, msg, inbound, memory, isAnswer ? earlier : [], filesForTurn(msg.from, files));
   } catch (err) {
     if (err instanceof FileTooLarge) answer = TOO_LARGE;
     else {

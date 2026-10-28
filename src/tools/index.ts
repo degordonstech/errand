@@ -7,7 +7,7 @@ import { createInvoice, listInvoices, markPaid, sendInvoice, sendPaymentReminder
 import { keepTools } from "./keep.js";
 import { forget, remember } from "./memory.js";
 import { makePdf } from "./pdfdoc.js";
-import { makeProductPhoto } from "./photo.js";
+import { makeCard, makeProductPhoto } from "./photo.js";
 import { checkProduct } from "./product.js";
 import { cancelReminder, listReminders, setReminder, setReminders, updateReminder } from "./reminders.js";
 import type { Tool } from "./types.js";
@@ -31,6 +31,7 @@ export const tools: Tool<any>[] = [
   markPaid,
   checkProduct,
   makeProductPhoto,
+  makeCard,
   activityLog,
   ...keepTools,
 ];

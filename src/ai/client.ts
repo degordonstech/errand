@@ -9,7 +9,8 @@ export const metaHeaders = (): Record<string, string> => (config.META_RELAY_KEY 
 export const meta = new OpenAI({
   baseURL: config.META_API_BASE_URL,
   apiKey: config.META_API_KEY,
-  timeout: 90_000,
+  // Spark answers in 10 to 20 seconds. A request that hangs is retried instead of waited on.
+  timeout: 40_000,
   maxRetries: 3,
   defaultHeaders: metaHeaders(),
   // DNS blips are retried quickly here, before the SDK's own slower retries.

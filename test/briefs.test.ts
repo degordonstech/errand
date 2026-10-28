@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dueBriefs, occurrences } from "../src/jobs/briefs.js";
-import { fromLagos, toLagos } from "../src/time.js";
+import { dueBriefs } from "../src/jobs/briefs.js";
+import { fromLagos, occurrences, toLagos } from "../src/time.js";
 
 const at = (local: string) => fromLagos(local)!;
 

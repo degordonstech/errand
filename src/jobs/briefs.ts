@@ -2,7 +2,7 @@ import { db, saveMessage, type User } from "../db/supabase.js";
 import { formatMoney } from "../invoice/pdf.js";
 import { logger, maskId } from "../log.js";
 import { sendText } from "../telegram/send.js";
-import { describeWhen, fromLagos, nextOccurrence, toLagos, type Repeat } from "../time.js";
+import { describeWhen, fromLagos, occurrences, toLagos, type Repeat } from "../time.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -13,26 +13,12 @@ const WEEKLY = { weekday: 0, time: "18:00" }; // Sunday evening
 
 type Kind = "morning" | "evening" | "weekly";
 
-interface Slot {
-  text: string;
-  at: Date;
-}
+type Slot = { text: string; at: Date };
 
 interface ReminderLite {
   text: string;
   due_at: string;
   repeat: Repeat | null;
-}
-
-/** Every time a reminder fires between two moments, repeats included. */
-export function occurrences(r: ReminderLite, from: Date, to: Date): Slot[] {
-  const out: Slot[] = [];
-  let t: Date | null = new Date(r.due_at);
-  for (let i = 0; t && t.getTime() < to.getTime() && i < 100; i++) {
-    if (t.getTime() >= from.getTime()) out.push({ text: r.text, at: t });
-    t = r.repeat ? nextOccurrence(r.repeat, t, t) : null;
-  }
-  return out;
 }
 
 /** Start of the Lagos day that contains `date`. */
@@ -140,6 +126,8 @@ export async function runBriefs(now = new Date()): Promise<number> {
   for (const user of (users ?? []) as User[]) {
     for (const { kind, day } of dueBriefs(user.brief_time!, now)) {
       if (done.has(`${user.id}:${kind}`)) continue;
+      // Someone who sets up at 8am does not want "Good morning" a minute later; the first brief comes tomorrow.
+      if (kind === "morning" && user.onboarded_at && new Date(user.onboarded_at) > fromLagos(`${day}T${user.brief_time}`)!) continue;
       // The primary key makes this insert fail when the brief already went out today.
       const { error: claimError } = await db.from("briefs_sent").insert({ user_id: user.id, kind, day });
       if (claimError) continue;

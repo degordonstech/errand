@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { askAboutMedia, imagePart, pdfPart } from "../ai/vision.js";
 import { db } from "../db/supabase.js";
+import { logger } from "../log.js";
+import { downloadFile } from "../telegram/api.js";
 import { sendStoredFile } from "../telegram/send.js";
-import { defineTool } from "./types.js";
+import { defineTool, type TurnFile } from "./types.js";
 
 // Documents, people, lists and notes: the things a friend remembers for you.
 
@@ -22,6 +25,25 @@ const fail = (tool: string, error: { message: string } | null) => {
 
 // Documents
 
+const FACTS_PROMPT =
+  "List the key facts in this document so questions about it can be answered later without the file. " +
+  "Short plain lines: what it is and between whom, every amount, date, deadline, reference or account number, " +
+  "name, address and important term or rule. No commentary. At most 40 lines.";
+
+/** Reads a saved PDF or photo once, so later questions about it need no second look at the file. */
+async function readFacts(file: TurnFile): Promise<string | null> {
+  const isPdf = file.mimeType === "application/pdf";
+  if (!isPdf && file.kind !== "photo" && !file.mimeType.startsWith("image/")) return null;
+  try {
+    const data = await downloadFile(file.fileId);
+    const part = isPdf ? pdfPart(data, file.filename ?? "document.pdf") : imagePart(data, file.kind === "photo" ? "image/jpeg" : file.mimeType);
+    return (await askAboutMedia(FACTS_PROMPT, [part])).slice(0, 4000) || null;
+  } catch (err) {
+    logger.warn({ err }, "could not read a saved file");
+    return null;
+  }
+}
+
 export const saveDocument = defineTool({
   name: "save_document",
   description:
@@ -36,16 +58,18 @@ export const saveDocument = defineTool({
     const file = files?.at(-1);
     if (!file) throw new Error("There is no file in this message to save. Ask the user to send it.");
     await underLimit("documents", user.id);
+    const facts = await readFacts(file);
     const { error } = await db.from("documents").insert({
       user_id: user.id,
       name: name.trim(),
-      description: description ?? null,
+      description: [description, facts && `Contents:\n${facts}`].filter(Boolean).join("\n\n") || null,
       kind: file.kind,
       file_id: file.fileId,
       mime_type: file.mimeType,
     });
     fail("save_document", error);
-    return { message: `Saved "${name}". The user can ask for it any time.` };
+    const read = facts ? " and read its key details, so the user can ask questions about it later" : "";
+    return { message: `Saved "${name}"${read}. The user can ask for it any time.` };
   },
 });
 
@@ -70,6 +94,27 @@ export const sendDocument = defineTool({
   },
 });
 
+export const searchDocuments = defineTool({
+  name: "search_documents",
+  description:
+    "Answer a question from the user's saved files, such as their tenancy agreement, receipts or letters. " +
+    "Pass a word from the question; leave it empty to read the latest files.",
+  sensitive: false,
+  schema: z.object({ query: z.string().max(80).optional() }),
+  async run({ query }, { user }) {
+    const term = query?.replace(/[%_,()]/g, "").trim();
+    const latest = () => db.from("documents").select("name, description, created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3);
+    let { data, error } = term ? await latest().or(`name.ilike.%${term}%,description.ilike.%${term}%`) : await latest();
+    fail("search_documents", error);
+    // Nothing matched the word: let the model read the latest few files itself.
+    if (term && !data?.length) ({ data } = await latest());
+    if (!data?.length) return { message: "The user has not saved any files." };
+    return {
+      message: data.map((d) => `File "${d.name}" (saved ${d.created_at.slice(0, 10)}):\n${d.description ?? "No details were read from this file."}`).join("\n\n"),
+    };
+  },
+});
+
 export const listDocuments = defineTool({
   name: "list_documents",
   description: "List the files the user has saved.",
@@ -79,7 +124,9 @@ export const listDocuments = defineTool({
     const { data, error } = await db.from("documents").select("name, description, created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(50);
     fail("list_documents", error);
     if (!data?.length) return { message: "The user has not saved any files." };
-    return { message: data.map((d) => `- ${d.name}${d.description ? `: ${d.description}` : ""} (saved ${d.created_at.slice(0, 10)})`).join("\n") };
+    // Only the first line of each description: the full contents are for search_documents.
+    const summary = (d: { description: string | null }) => (d.description ? `: ${d.description.split("\n")[0].slice(0, 120)}` : "");
+    return { message: data.map((d) => `- ${d.name}${summary(d)} (saved ${d.created_at.slice(0, 10)})`).join("\n") };
   },
 });
 
@@ -113,7 +160,7 @@ async function setBirthdayReminder(userId: string, personId: string, name: strin
   const due = new Date(Date.UTC(Number(when.slice(0, 4)), Number(when.slice(5, 7)) - 1, Number(when.slice(8, 10)), 7, 0));
   const { error } = await db.from("reminders").insert({
     user_id: userId,
-    text: `${name}'s birthday today. Want me to draft a message for them?`,
+    text: `${name}'s birthday today. Want me to make a card and write a message for them?`,
     due_at: due.toISOString(),
     repeat: { every: "year" },
     source,
@@ -248,6 +295,15 @@ export const showList = defineTool({
 
 // Notes
 
+const titleWords = (t: string): string[] => t.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+
+/** Two titles for the same note, such as "Test study plan Nov 2026" and "Test study plan, 2hrs daily". */
+export function sameNote(a: string, b: string): boolean {
+  const [x, y] = [titleWords(a), titleWords(b)];
+  const shared = x.filter((w) => y.includes(w)).length;
+  return shared >= 2 && shared >= Math.min(x.length, y.length) / 2;
+}
+
 export const saveNote = defineTool({
   name: "save_note",
   description: "Save a note or idea, often from a voice note. Tidy it into clear text first, keeping all the details.",
@@ -258,8 +314,23 @@ export const saveNote = defineTool({
     topic: z.string().max(40).optional().describe('A one or two word topic such as "business ideas" or "school".'),
   }),
   async run({ title, body, topic }, { user }) {
+    // Saving the same thing again a few minutes later (a plan, then the plan with times) updates it.
+    const { data: recent } = await db
+      .from("notes")
+      .select("id, title")
+      .eq("user_id", user.id)
+      .gte("created_at", new Date(Date.now() - 15 * 60_000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(5);
+    const same = (recent ?? []).find((n) => sameNote(n.title, title));
+    const fields = { title: title.trim(), body: body.trim(), topic: topic?.trim().toLowerCase() ?? null };
+    if (same) {
+      const { error } = await db.from("notes").update(fields).eq("id", same.id);
+      fail("save_note", error);
+      return { message: `Updated the note "${title}".` };
+    }
     await underLimit("notes", user.id);
-    const { error } = await db.from("notes").insert({ user_id: user.id, title: title.trim(), body: body.trim(), topic: topic?.trim().toLowerCase() ?? null });
+    const { error } = await db.from("notes").insert({ user_id: user.id, ...fields });
     fail("save_note", error);
     return { message: `Saved the note "${title}".` };
   },
@@ -328,6 +399,7 @@ export const whatIKnow = defineTool({
 export const keepTools = [
   saveDocument,
   sendDocument,
+  searchDocuments,
   listDocuments,
   deleteDocument,
   savePerson,

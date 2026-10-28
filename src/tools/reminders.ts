@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { db } from "../db/supabase.js";
-import { describeRepeat, describeWhen, firstOccurrence, fromLagos, type Repeat } from "../time.js";
+import { describeRepeat, describeWhen, firstOccurrence, fromLagos, occurrences, type Repeat } from "../time.js";
 import { defineTool } from "./types.js";
 
 /** Enough for timetables and bills, small enough that a runaway model cannot flood the table. */
@@ -46,6 +46,46 @@ export function describeReminder(r: Pick<ReminderRow, "text" | "due_at" | "repea
   return `${r.text}: ${describeWhen(new Date(r.due_at), now)}${repeat ? ` (${repeat})` : ""}`;
 }
 
+/** Course codes ("csc 201") and longer words, to tell apart two reminders set for the same moment. */
+const keyWords = (text: string) => new Set(text.toLowerCase().match(/[a-z]{2,4}\s?\d{3}|[a-z]{4,}/g)?.map((w) => w.replace(/\s/, "")) ?? []);
+
+/**
+ * True when an active reminder for the same moment says the same thing, for example
+ * "CSC 201 exam in 3 days" against "CSC 201 - Computer Programming I exam in 3 days".
+ */
+export function isDuplicate(text: string, dueAt: string, existing: Pick<ReminderRow, "text" | "due_at">[]): boolean {
+  const mine = keyWords(text);
+  const code = [...mine].find((w) => /\d/.test(w));
+  return existing.some((r) => {
+    if (new Date(r.due_at).getTime() !== new Date(dueAt).getTime()) return false;
+    const theirs = keyWords(r.text);
+    if (code) return theirs.has(code);
+    const shared = [...mine].filter((w) => theirs.has(w)).length;
+    return shared >= Math.max(1, Math.min(mine.size, theirs.size) / 2);
+  });
+}
+
+type Fixed = Pick<ReminderRow, "text" | "due_at" | "repeat">;
+
+/** Classes, exams and events that fall within 90 minutes of a new reminder, so MyPaddy can point out a clash. */
+export function findClashes(when: Date, fixed: Fixed[]): string[] {
+  const window = 90 * 60 * 1000;
+  const from = new Date(when.getTime() - window);
+  const to = new Date(when.getTime() + window);
+  return fixed.flatMap((r) => occurrences(r, from, to).map((o) => `${r.text} (reminder at ${describeWhen(o.at, when)})`));
+}
+
+async function activeReminders(userId: string): Promise<(ReminderRow & { source: string })[]> {
+  const { data, error } = await db.from("reminders").select().eq("user_id", userId).eq("status", "active").limit(MAX_ACTIVE_PER_USER);
+  if (error) throw new Error(`activeReminders: ${error.message}`);
+  return (data ?? []) as ReminderRow[];
+}
+
+const FIXED_SOURCES = new Set(["timetable", "exams", "event"]);
+
+const clashNote = (clashes: string[]) =>
+  clashes.length ? ` It may clash with: ${clashes.slice(0, 3).join("; ")}. Point this out in one line and ask if they still want it at that time.` : "";
+
 export const setReminder = defineTool({
   name: "set_reminder",
   description:
@@ -63,8 +103,10 @@ export const setReminder = defineTool({
     const due = firstOccurrence(parseWhen(args.when), args.repeat ?? null, now);
     if (!due) throw new Error("That time has already passed. Ask the user when they want it.");
 
-    const { count } = await db.from("reminders").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "active");
-    if ((count ?? 0) >= MAX_ACTIVE_PER_USER) throw new Error(`The user already has ${MAX_ACTIVE_PER_USER} active reminders. Ask them to cancel some first.`);
+    const existing = await activeReminders(user.id);
+    if (existing.length >= MAX_ACTIVE_PER_USER) throw new Error(`The user already has ${MAX_ACTIVE_PER_USER} active reminders. Ask them to cancel some first.`);
+    if (isDuplicate(args.text, due.toISOString(), existing)) return { message: "That reminder is already set. Do not set it again; tell the user it is already there." };
+    const clashes = findClashes(due, existing.filter((r) => FIXED_SOURCES.has(r.source)));
 
     const { data, error } = await db
       .from("reminders")
@@ -80,7 +122,7 @@ export const setReminder = defineTool({
     if (error) throw new Error(`set_reminder: ${error.message}`);
     const row = data as ReminderRow;
     return {
-      message: `Reminder set: ${describeReminder(row, now)}.${args.picked_up_from_conversation ? " Tell the user in one line, and that they can say cancel." : ""}`,
+      message: `Reminder set: ${describeReminder(row, now)}.${args.picked_up_from_conversation ? " Tell the user in one line, and that they can say cancel." : ""}${clashNote(clashes)}`,
       data: { reminder_id: row.id },
     };
   },
@@ -107,14 +149,16 @@ export const setReminders = defineTool({
   }),
   async run({ source, items }, { user }) {
     const now = new Date();
-    const { count } = await db.from("reminders").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("status", "active");
-    if ((count ?? 0) + items.length > MAX_ACTIVE_PER_USER) throw new Error(`That would pass the limit of ${MAX_ACTIVE_PER_USER} active reminders.`);
+    const existing = await activeReminders(user.id);
+    if (existing.length + items.length > MAX_ACTIVE_PER_USER) throw new Error(`That would pass the limit of ${MAX_ACTIVE_PER_USER} active reminders.`);
 
     const rows: { user_id: string; text: string; due_at: string; repeat: Repeat | null; source: string }[] = [];
     const skipped: string[] = [];
+    let alreadySet = 0;
     for (const item of items) {
       const due = fromLagos(item.when) && firstOccurrence(fromLagos(item.when)!, item.repeat ?? null, now);
-      if (due) rows.push({ user_id: user.id, text: item.text.trim(), due_at: due.toISOString(), repeat: item.repeat ?? null, source });
+      if (due && isDuplicate(item.text, due.toISOString(), [...existing, ...rows])) alreadySet++;
+      else if (due) rows.push({ user_id: user.id, text: item.text.trim(), due_at: due.toISOString(), repeat: item.repeat ?? null, source });
       else skipped.push(item.text);
     }
     if (rows.length) {
@@ -122,10 +166,15 @@ export const setReminders = defineTool({
       if (error) throw new Error(`set_reminders: ${error.message}`);
     }
     const lines = rows.map((r) => `- ${describeReminder(r, now)}`).join("\n");
+    // An event can clash with classes or exams. Classes against classes are left alone.
+    const fixed = existing.filter((r) => FIXED_SOURCES.has(r.source) && r.source !== source);
+    const clashes = source === "timetable" ? [] : [...new Set(rows.flatMap((r) => findClashes(new Date(r.due_at), fixed)))];
     return {
       message:
         `Set ${rows.length} reminders:\n${lines}` +
+        clashNote(clashes) +
         (skipped.length ? `\nSkipped ${skipped.length} already in the past: ${skipped.join("; ")}.` : "") +
+        (alreadySet ? `\n${alreadySet} were already set, so they were not added again.` : "") +
         "\nTell the user briefly what was set (group by day, do not list every line if there are many) and that they can change any of it.",
     };
   },

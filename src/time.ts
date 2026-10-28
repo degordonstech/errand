@@ -98,3 +98,14 @@ export function describeRepeat(repeat: Repeat | null | undefined): string {
   } else s = n === 1 ? `every ${repeat.every}` : `every ${n} ${repeat.every}s`;
   return repeat.until ? `${s} until ${repeat.until}` : s;
 }
+
+/** Every time a reminder fires between two moments, repeats included. */
+export function occurrences<R extends { text: string; due_at: string; repeat: Repeat | null }>(r: R, from: Date, to: Date): { text: string; at: Date }[] {
+  const out: { text: string; at: Date }[] = [];
+  let t: Date | null = new Date(r.due_at);
+  for (let i = 0; t && t.getTime() < to.getTime() && i < 100; i++) {
+    if (t.getTime() >= from.getTime()) out.push({ text: r.text, at: t });
+    t = r.repeat ? nextOccurrence(r.repeat, t, t) : null;
+  }
+  return out;
+}
