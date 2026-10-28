@@ -53,7 +53,8 @@ export interface CardDesign {
   headline: string;
   quote: string;
   from?: string;
-  theme?: string;
+  /** The user's own colours and decoration. Nothing about the look is fixed. */
+  theme: string;
   withPhoto: boolean;
 }
 
@@ -64,11 +65,11 @@ export function cardPrompt(d: CardDesign): string {
     "Layout from top to bottom:",
     `- A headline in elegant large decorative lettering that reads exactly "${quoteSafe(d.headline, 60)}".`,
     d.withPhoto
-      ? "- The photo, unchanged, in an elegant rounded frame with a thin gold border."
+      ? "- The photo, unchanged, in an elegant rounded frame with a thin border in the card's accent colour."
       : "- A decorative centrepiece that suits the occasion, such as a cake, flowers or a trophy.",
     `- A short quote in a refined serif font, inside a soft panel with a thin frame, that reads exactly "${quoteSafe(d.quote, 160)}".`,
     ...(d.from ? [`- At the bottom, a handwritten-style signature that reads exactly "${quoteSafe(d.from, 40)}".`] : []),
-    `Look: ${d.theme?.trim() || "emerald green, cream and gold, with gold-foil accents, balloons and confetti"}. Rich paper texture, soft shadows, balanced composition with generous margins.`,
+    `Colours and decoration, followed exactly: ${quoteSafe(d.theme, 200)}. Use these colours for the background, border, lettering and accents. Rich paper texture, soft shadows, balanced composition with generous margins.`,
     "Every word must be spelled exactly as given. No other text anywhere.",
   ];
   return lines.join("\n");
@@ -90,9 +91,9 @@ export const makeCard = defineTool({
     from: z.string().max(40).optional().describe('The signature, for example "With love, Godwin".'),
     theme: z
       .string()
+      .min(1)
       .max(200)
-      .optional()
-      .describe('Colours and decoration, for example "pink and rose gold with flowers", "Ankara pattern", "football, Arsenal red". Pick something fitting if not given.'),
+      .describe('The colours and decoration the user chose, in their words, for example "baby blue and white with stars", "purple", "Ankara pattern", "Arsenal red".'),
     use_photo: z.boolean().optional().describe("True when the user sent a photo of the person for the card."),
   }),
   async run({ headline, quote, from, theme, use_photo }, { user, files }) {
