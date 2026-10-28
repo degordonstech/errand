@@ -2,7 +2,7 @@ import { config } from "./config.js";
 import { db, saveMessage, type User } from "./db/supabase.js";
 import { eveningBrief, morningBrief, weeklyBrief } from "./jobs/briefs.js";
 import { runFollowUps } from "./jobs/followups.js";
-import { runDueReminders } from "./jobs/tick.js";
+import { fireEarly } from "./jobs/tick.js";
 import { sendText } from "./telegram/send.js";
 
 // Recording a demo in a few minutes means showing things that normally happen tomorrow or next week.
@@ -28,33 +28,36 @@ async function sendBrief(user: User, text: string | null): Promise<string | null
   return null;
 }
 
-/** Moves one reminder to now and lets the normal sender deliver it, buttons and all. */
+/** Sends one upcoming reminder now, buttons and all, keeping its real schedule. */
 async function fireNow(userId: string, sourceLike?: string, word?: string): Promise<string | null> {
   let q = db.from("reminders").select("id").eq("user_id", userId).eq("status", "active").order("due_at").limit(1);
   if (sourceLike) q = q.like("source", sourceLike);
   if (word) q = q.ilike("text", `%${word.replace(/[%_]/g, "")}%`);
   const { data } = await q;
   if (!data?.length) return sourceLike ? "No birthday saved yet." : "You have no reminders set.";
-  const now = new Date();
-  await db.from("reminders").update({ due_at: new Date(now.getTime() - 1000).toISOString() }).eq("id", data[0].id);
-  await runDueReminders(now);
-  return null;
+  return (await fireEarly(data[0].id)) ? null : "Could not send that reminder. Try again.";
 }
 
-/** Makes the last reminded task look three hours old, so the follow-up goes out now. */
+/**
+ * Makes the last reminded task look three hours old, so the follow-up goes out now.
+ * A task already tapped Done is asked about again, so a slip during recording does not spoil the take.
+ */
 async function followUpNow(userId: string): Promise<string | null> {
   const { data } = await db
     .from("reminders")
     .select("id")
     .eq("user_id", userId)
-    .eq("status", "sent")
+    .in("status", ["sent", "done"])
     .is("repeat", null)
     .in("source", ["user", "casual", "snooze"])
     .order("last_sent_at", { ascending: false })
     .limit(1);
   if (!data?.length) return "No reminded task to follow up on yet. Set a reminder and let it fire first.";
   const now = new Date();
-  await db.from("reminders").update({ followed_up_at: null, last_sent_at: new Date(now.getTime() - 3 * 3_600_000 - 60_000).toISOString() }).eq("id", data[0].id);
+  await db
+    .from("reminders")
+    .update({ status: "sent", followed_up_at: null, last_sent_at: new Date(now.getTime() - 3 * 3_600_000 - 60_000).toISOString() })
+    .eq("id", data[0].id);
   const sent = await runFollowUps(now);
   return sent ? null : "Follow-ups only go out between 9am and 9pm.";
 }

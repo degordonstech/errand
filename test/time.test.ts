@@ -76,3 +76,11 @@ describe("firstOccurrence", () => {
     expect(toLagos(firstOccurrence(at("2026-10-28T08:00"), { every: "day" }, now)!)).toBe("2026-10-29T08:00");
   });
 });
+
+describe("describeWhen across years", () => {
+  it("shows the year when the date is in another year", () => {
+    const now = at("2026-10-28T12:00");
+    expect(describeWhen(at("2027-11-14T08:00"), now)).toBe("Sun 14 Nov 2027, 8:00am");
+    expect(describeWhen(at("2026-11-14T08:00"), now)).toBe("Sat 14 Nov, 8:00am");
+  });
+});

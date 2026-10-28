@@ -83,7 +83,8 @@ export function describeWhen(date: Date, now = new Date()): string {
   const diff = dayOf(date) - dayOf(now);
   if (diff === 0) return `today, ${time}`;
   if (diff === 1) return `tomorrow, ${time}`;
-  const day = local.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  const sameYear = local.getUTCFullYear() === new Date(now.getTime() + OFFSET_MS).getUTCFullYear();
+  const day = local.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }), timeZone: "UTC" });
   return `${day.replace(",", "")}, ${time}`;
 }
 
