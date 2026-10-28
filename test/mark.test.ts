@@ -27,3 +27,15 @@ describe("reading model output for the marked pack photo", () => {
     expect(jpegSize(Buffer.from("not a jpeg"))).toBeNull();
   });
 });
+
+describe("cardPrompt", () => {
+  it("lays out the card with every word quoted exactly", async () => {
+    const { cardPrompt } = await import("../src/tools/photo.js");
+    const p = cardPrompt({ headline: 'Happy Birthday, "Tobi"!', quote: "Another year of big dreams.", from: "With love, Godwin", withPhoto: false });
+    expect(p).toContain('reads exactly "Happy Birthday, Tobi !"');
+    expect(p).toContain('reads exactly "Another year of big dreams."');
+    expect(p).toContain('reads exactly "With love, Godwin"');
+    expect(p).not.toContain("photo provided");
+    expect(cardPrompt({ headline: "Congrats!", quote: "Well done.", withPhoto: true })).toContain("photo, unchanged");
+  });
+});

@@ -46,41 +46,76 @@ export const makeProductPhoto = defineTool({
   },
 });
 
-/** Quotes are what Muse Image copies letter for letter, so anything inside them is kept short and plain. */
-const quoteSafe = (s: string) => s.replace(/["\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+/** Words in quotes are what Muse Image copies letter for letter, so they are kept plain and short. */
+const quoteSafe = (s: string, max: number) => s.replace(/["\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+
+export interface CardDesign {
+  headline: string;
+  quote: string;
+  from?: string;
+  theme?: string;
+  withPhoto: boolean;
+}
+
+/** The brief for Muse Image: a printed stationery card, laid out top to bottom, every word given exactly. */
+export function cardPrompt(d: CardDesign): string {
+  const lines = [
+    `Design a beautiful, premium printed greeting card, portrait orientation, like a high-end stationery card${d.withPhoto ? ", using the photo provided" : ""}.`,
+    "Layout from top to bottom:",
+    `- A headline in elegant large decorative lettering that reads exactly "${quoteSafe(d.headline, 60)}".`,
+    d.withPhoto
+      ? "- The photo, unchanged, in an elegant rounded frame with a thin gold border."
+      : "- A decorative centrepiece that suits the occasion, such as a cake, flowers or a trophy.",
+    `- A short quote in a refined serif font, inside a soft panel with a thin frame, that reads exactly "${quoteSafe(d.quote, 160)}".`,
+    ...(d.from ? [`- At the bottom, a handwritten-style signature that reads exactly "${quoteSafe(d.from, 40)}".`] : []),
+    `Look: ${d.theme?.trim() || "emerald green, cream and gold, with gold-foil accents, balloons and confetti"}. Rich paper texture, soft shadows, balanced composition with generous margins.`,
+    "Every word must be spelled exactly as given. No other text anywhere.",
+  ];
+  return lines.join("\n");
+}
 
 export const makeCard = defineTool({
   name: "make_card",
   description:
-    "Make a greeting card image with Muse Image: birthday, congratulations, graduation, wedding, thank you, get well or any celebration. " +
-    "Use it when the user asks for a card, or says yes to a birthday reminder's offer of one.",
+    "Make a beautiful greeting card image with Muse Image: birthday, congratulations, graduation, wedding, thank you, get well or any celebration. " +
+    "Write a short heartfelt quote for it that fits the person. Use it when the user asks for a card, or says yes to a birthday reminder's offer.",
   sensitive: false,
   schema: z.object({
-    headline: z.string().min(1).max(60).describe('The big words on the card, for example "Happy Birthday, Tobi!".'),
-    from: z.string().max(40).optional().describe("Who it is from, usually the user's name."),
-    style: z
+    headline: z.string().min(1).max(60).describe('The big words, for example "Happy Birthday, Tobi!".'),
+    quote: z
+      .string()
+      .min(1)
+      .max(160)
+      .describe("A short warm wish or quote for the inside, one or two sentences, personal to what you know about them. In English unless they asked otherwise."),
+    from: z.string().max(40).optional().describe('The signature, for example "With love, Godwin".'),
+    theme: z
       .string()
       .max(200)
       .optional()
-      .describe('Look and feel, for example "green and gold balloons", "elegant floral", "Ankara pattern", "football theme". Pick something fitting if not given.'),
+      .describe('Colours and decoration, for example "pink and rose gold with flowers", "Ankara pattern", "football, Arsenal red". Pick something fitting if not given.'),
+    use_photo: z.boolean().optional().describe("True when the user sent a photo of the person for the card."),
   }),
-  async run({ headline, from, style }, { user }) {
-    await sendText(user.chat_id, "Making your card...");
-    const signature = from ? ` with a smaller line underneath reading exactly "From ${quoteSafe(from)}"` : "";
-    const res = await retryModelNotFound(() =>
-      meta.images.generate(
-        {
-          model: MUSE_IMAGE,
-          prompt:
-            `A warm, stylish greeting card. Large clear lettering that reads exactly "${quoteSafe(headline)}"${signature}. ` +
-            `${style?.trim() || "Festive and joyful"}, modern illustration, plenty of space around the text, every letter spelled correctly. No other words.`,
-        },
-        { timeout: 150_000, maxRetries: 1 },
-      ),
+  async run({ headline, quote, from, theme, use_photo }, { user, files }) {
+    const photo = use_photo ? files?.filter((f) => f.kind === "photo" || f.mimeType.startsWith("image/")).at(-1) : undefined;
+    if (use_photo && !photo) throw new Error("There is no photo to put on the card. Ask the user to send one, or make it without a photo.");
+    await sendText(user.chat_id, photo ? "Making your card with the photo. About 30 seconds..." : "Making your card...");
+
+    const prompt = cardPrompt({ headline, quote, from, theme, withPhoto: Boolean(photo) });
+    const options = { timeout: 150_000, maxRetries: 1 };
+    const res = await retryModelNotFound(async () =>
+      photo
+        ? meta.images.edit(
+            { model: MUSE_IMAGE, size: "1024x1536", prompt, image: await toFile(await scaleImage(await downloadFile(photo.fileId), 1600), "photo.jpg", { type: "image/jpeg" }) },
+            options,
+          )
+        : meta.images.generate({ model: MUSE_IMAGE, size: "1024x1536", prompt }, options),
     );
     const b64 = res.data?.[0]?.b64_json;
     if (!b64) throw new Error("Muse Image returned no picture.");
     await sendPhoto(user.chat_id, await scaleImage(Buffer.from(b64, "base64"), 1600));
-    return { message: "The card has been sent. Now offer a short message to go with it, in the user's voice, ready to copy." };
+    return {
+      message:
+        "The card has been sent. Do not describe it. Give a short warm message to go with it, in the user's voice, ready to copy, and offer to change the colours or add a photo.",
+    };
   },
 });
