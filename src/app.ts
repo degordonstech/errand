@@ -5,6 +5,7 @@ import { handleMessage } from "./handle.js";
 import { enqueueForUser } from "./jobs/queue.js";
 import { runReminders } from "./jobs/reminders.js";
 import { runBriefs } from "./jobs/briefs.js";
+import { runFollowUps } from "./jobs/followups.js";
 import { runDueReminders } from "./jobs/tick.js";
 import { logger, maskId } from "./log.js";
 import { registerWebhook, sameSecret, type WebhookDeps } from "./telegram/webhook.js";
@@ -45,8 +46,18 @@ export function buildApp() {
     handler: async (req, reply) => {
       const q = req.query as Record<string, string | undefined>;
       if (!sameSecret(q.key ?? (req.headers["x-cron-key"] as string | undefined), config.CRON_SECRET)) return reply.code(401).send();
-      const result = { ...(await runDueReminders()), briefs: await runBriefs() };
-      if (result.due || result.briefs) logger.info(result, "tick");
+      // Each job runs on its own, so a fault in one never stops the others.
+      const safely = <T>(job: string, fn: () => Promise<T>, fallback: T) =>
+        fn().catch((err) => {
+          logger.error({ err, job }, "tick job failed");
+          return fallback;
+        });
+      const result = {
+        ...(await safely("reminders", () => runDueReminders(), { due: 0, sent: 0, failed: 0 })),
+        briefs: await safely("briefs", () => runBriefs(), 0),
+        followUps: await safely("follow-ups", () => runFollowUps(), 0),
+      };
+      if (result.due || result.briefs || result.followUps) logger.info(result, "tick");
       return result;
     },
   });

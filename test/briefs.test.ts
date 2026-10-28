@@ -33,3 +33,27 @@ describe("occurrences", () => {
     expect(occurrences(r, at("2026-10-30T00:00"), at("2026-10-31T00:00"))).toHaveLength(1);
   });
 });
+
+describe("follow-ups", () => {
+  it("only asks at sociable hours, Lagos time", async () => {
+    const { sociableHour, followUpText } = await import("../src/jobs/followups.js");
+    expect(sociableHour(at("2026-10-28T08:59"))).toBe(false);
+    expect(sociableHour(at("2026-10-28T09:00"))).toBe(true);
+    expect(sociableHour(at("2026-10-28T20:59"))).toBe(true);
+    expect(sociableHour(at("2026-10-28T21:00"))).toBe(false);
+    expect(followUpText("Submit CSC 201 assignment.")).toBe("Quick one: did you get this done?\n\n*Submit CSC 201 assignment*");
+  });
+});
+
+describe("eventsAhead", () => {
+  it("puts exams on their real dates and ignores countdowns", async () => {
+    const { eventsAhead } = await import("../src/jobs/briefs.js");
+    const slots = [
+      { text: "CSC 201 exam tomorrow at 9:00am in CBT Centre", at: at("2026-11-03T20:00"), source: "exams" },
+      { text: "CSC 201 exam today at 9:00am in CBT Centre", at: at("2026-11-04T07:00"), source: "exams" },
+      { text: "MTH 201 exam in 3 days", at: at("2026-11-03T19:00"), source: "exams" },
+      { text: "CSC 203 in LT3 at 10:00am", at: at("2026-11-03T09:30"), source: "timetable" },
+    ];
+    expect(eventsAhead(slots, at("2026-11-02T07:00"))).toEqual(["Wednesday 4 Nov: CSC 201 exam at 9:00am in CBT Centre"]);
+  });
+});

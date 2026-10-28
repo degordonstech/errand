@@ -18,12 +18,13 @@ import {
   APPROVAL_PROMPT,
   keepTyping,
   parseApprovalButton,
+  parseFollowUpButton,
   parseReminderButton,
   sendApproval,
   sendText,
   settleButtons,
 } from "./telegram/send.js";
-import { applyReminderTap } from "./tools/reminders.js";
+import { answerFollowUp, applyReminderTap } from "./tools/reminders.js";
 import type { InboundMedia, InboundMessage } from "./telegram/types.js";
 import type { TurnFile } from "./tools/types.js";
 
@@ -211,6 +212,22 @@ async function handleTap(user: User, msg: InboundMessage): Promise<void> {
     // Type buttons stay so more can be tapped; every other onboarding button is used once.
     if (data.startsWith("ob:type:") || toast === "Tap at least one first.") await answerTap(callback.id, toast || undefined);
     else await settleButtons(msg.from, callback, toast || undefined);
+    return;
+  }
+
+  const followUp = parseFollowUpButton(data);
+  if (followUp) {
+    const reply = await answerFollowUp(user.id, followUp.done, followUp.reminderId).catch((err) => {
+      logger.error({ err, from: maskId(msg.from) }, "follow-up tap failed");
+      return { toast: "Something went wrong. Please try again.", text: null };
+    });
+    await settleButtons(msg.from, callback, reply.toast);
+    await saveMessage(user.id, "in", "text", followUp.done ? "Yes, done" : "Not yet", msg.id);
+    if (reply.text) {
+      const outId = await sendText(user.chat_id, reply.text);
+      await saveMessage(user.id, "out", "text", `${reply.text}
+(reminder id ${followUp.reminderId})`, outId);
+    }
     return;
   }
 

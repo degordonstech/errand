@@ -116,8 +116,11 @@ create table if not exists public.reminders (
   source       text not null default 'user',
   status       text not null default 'active' check (status in ('active', 'sent', 'done', 'cancelled')),
   last_sent_at timestamptz,
+  -- Set when MyPaddy asked whether a task reminder was done.
+  followed_up_at timestamptz,
   created_at   timestamptz not null default now()
 );
+create index if not exists reminders_followup_idx on public.reminders (status, last_sent_at) where followed_up_at is null;
 create index if not exists reminders_due_idx on public.reminders (status, due_at);
 create index if not exists reminders_user_idx on public.reminders (user_id, status);
 

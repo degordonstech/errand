@@ -265,3 +265,17 @@ export async function applyReminderTap(userId: string, tap: "done" | "1h" | "tmr
   }
   return `I'll remind you again ${describeWhen(due, now)}.`;
 }
+
+/**
+ * The user's answer to "did you get this done?". Done closes the reminder; not yet asks
+ * when to remind them again, and the reply goes to the agent with the id in history.
+ */
+export async function answerFollowUp(userId: string, done: boolean, reminderId: string): Promise<{ toast: string; text: string | null }> {
+  const r = await getReminder(userId, reminderId).catch(() => null);
+  if (!r) return { toast: "That reminder is no longer here.", text: null };
+  if (done) {
+    await db.from("reminders").update({ status: "done" }).eq("id", r.id).eq("user_id", userId);
+    return { toast: "Nice one!", text: null };
+  }
+  return { toast: "", text: `No wahala. When should I remind you again about "${r.text}"?` };
+}

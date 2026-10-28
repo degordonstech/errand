@@ -127,3 +127,22 @@ export async function sendPhoto(chatId: string, jpeg: Buffer, caption?: string):
   const res = await call<{ message_id: number }>("sendPhoto", form);
   return String(res.message_id);
 }
+
+export function parseFollowUpButton(data: string | undefined): { done: boolean; reminderId: string } | null {
+  const m = data?.match(/^fu:(yes|no):(.+)$/);
+  return m ? { done: m[1] === "yes", reminderId: m[2] } : null;
+}
+
+/** Asks whether a reminded task got done, the way a friend checks in. */
+export function sendFollowUp(chatId: string, text: string, reminderId: string): Promise<string | undefined> {
+  return sendMessage(chatId, text, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "Yes, done", callback_data: `fu:yes:${reminderId}` },
+          { text: "Not yet", callback_data: `fu:no:${reminderId}` },
+        ],
+      ],
+    },
+  });
+}
