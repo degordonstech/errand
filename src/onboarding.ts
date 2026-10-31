@@ -31,7 +31,7 @@ export const FEATURES: Feature[] = [
   { id: "memory", label: "remembering numbers, details, documents and people", for: "all" },
   { id: "events", label: "saving dates from invites, flyers and birthdays", for: "all" },
   { id: "notes", label: "turning voice notes into to-do lists and notes", for: "all" },
-  { id: "fake_check", label: "checking if a drug or product is fake", for: "all" },
+  { id: "fake_check", label: "checking if a product is fake", for: "all" },
   { id: "letters", label: "explaining letters and drafting replies", for: "all" },
 ];
 

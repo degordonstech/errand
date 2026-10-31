@@ -2,7 +2,7 @@
 
 **The paddy that never forgets.**
 
-MyPaddy is a friend in your Telegram that remembers things for you, reminds you before it is too late, checks whether a product is fake, and gets small jobs done. You talk to it the way you would text a friend: a message, a voice note in English or Nigerian Pidgin, a photo, a video or a PDF. It never sends anything on your behalf until you say YES.
+MyPaddy is an AI agent in your Telegram that acts first. Most assistants wait for you to open them; MyPaddy messages you: it reminds you before it is too late, follows up when you skip a task and keeps you accountable to your goals. It also remembers what you share, reads agreements before you sign, spots counterfeit goods and makes small things for you. It is for students, teachers, business owners and anyone with a busy life. You talk to it the way you would text a friend: a message, a voice note in English or Nigerian Pidgin, a photo, a video or a PDF. It never sends anything on your behalf until you say YES.
 
 - **Try it:** [t.me/mypaddyngbot](https://t.me/mypaddyngbot)
 - **Demo video (3 min):** [youtu.be/MoJJxuz209I](https://youtu.be/MoJJxuz209I)
@@ -18,7 +18,7 @@ MyPaddy is a friend in your Telegram that remembers things for you, reminds you 
 
 **Keeps you accountable.** A few hours after a task reminder you did not tick off, it asks whether you got it done. Goals ("study two hours every evening") get check-ins and a log, and a photo of your notes gets a reply on what you covered and what comes next.
 
-**Watches your back.** Send a photo or short video of a product pack and MyPaddy reads the NAFDAC number, checks it on the official NAFDAC Greenbook register and tells you whether the number belongs to that product. Your photo comes back with the pack outlined and the number boxed, so you can see exactly what was checked. It also reviews agreements before you sign, and explains letters and bills in plain words. It never gives medical advice.
+**Watches your back.** It reviews agreements before you sign, catching fees and clauses you would miss, and explains letters and bills in plain words. Counterfeit goods are common, so it can also verify a product's registration: send a photo or short video of the pack and MyPaddy reads the registration number, looks it up on the official government register (the NAFDAC Greenbook) and tells you whether that number belongs to that product. Your photo comes back with the pack outlined and the number boxed, so you can see exactly what was checked.
 
 **Makes things.** Greeting cards in the colours you choose, with your friend's photo if you send one. Clean product photos for a WhatsApp Status or catalogue. Neat PDFs from anything you dictate. Invoices from a voice note, emailed to your customer after your YES, with payment reminders later.
 
@@ -46,7 +46,7 @@ MyPaddy is a friend in your Telegram that remembers things for you, reminds you 
 - Nothing is emailed or sent to anyone without the user's YES.
 - Secrets live only in environment variables. Logs mask chat ids and never contain tokens, phone numbers or email addresses.
 - Each user can see everything MyPaddy keeps about them and delete any of it.
-- The product check is a registration check only. MyPaddy never says a product is safe to take and never gives dosage or medical advice.
+- The product check is an authenticity check only: it confirms whether a registration number is on the official register and matches the product. It does not judge, rate or recommend products.
 - Each user has a daily message limit, which keeps model costs predictable.
 
 ## Built during the hackathon

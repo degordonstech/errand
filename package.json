@@ -2,7 +2,7 @@
   "name": "mypaddy",
   "version": "0.1.0",
   "private": true,
-  "description": "An agent on WhatsApp that does small jobs for you: invoices, product checks, letters.",
+  "description": "An AI agent in Telegram that acts first: reminders, follow-ups, accountability and small jobs, built on Meta's Muse models.",
   "license": "MIT",
   "type": "module",
   "engines": {
