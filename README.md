@@ -28,7 +28,7 @@ MyPaddy is a friend in your Telegram that remembers things for you, reminds you 
 |---|---|
 | **Muse Spark 1.3** | The agent. Reads every message, photo, video frame and PDF, decides what to do and calls one of 35 tools: reminders, memory, files, lists, invoices, email, cards and more. It also writes the morning, evening and weekly messages from the user's own data. |
 | **Muse Voice Transcribe** | Turns voice notes into text, including Nigerian Pidgin. Each request is hinted with words this user is likely to say, such as their course codes and the names of people they saved. |
-| **SAM 3.1** | Finds the pack in a drug photo. MyPaddy crops to it so Muse Spark can read the small print a second time, then boxes the number on the user's own photo. If the two readings differ, the user is told. |
+| **SAM 3.1** | Finds the pack in a product photo. MyPaddy crops to it so Muse Spark can read the small print a second time, then boxes the number on the user's own photo. If the two readings differ, the user is told. |
 | **Muse Image** | Makes greeting cards (generation) and turns a user's product photo into a clean studio shot (editing), keeping the product and its labels exactly as they are. |
 
 ## How it is built
@@ -46,7 +46,7 @@ MyPaddy is a friend in your Telegram that remembers things for you, reminds you 
 - Nothing is emailed or sent to anyone without the user's YES.
 - Secrets live only in environment variables. Logs mask chat ids and never contain tokens, phone numbers or email addresses.
 - Each user can see everything MyPaddy keeps about them and delete any of it.
-- The drug check is a registration check only. MyPaddy never says a product is safe to take and never gives dosage or medical advice.
+- The product check is a registration check only. MyPaddy never says a product is safe to take and never gives dosage or medical advice.
 - Each user has a daily message limit, which keeps model costs predictable.
 
 ## Built during the hackathon
